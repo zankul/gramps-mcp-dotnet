@@ -53,19 +53,20 @@ Each phase is independently shippable and ends in a working state.
 
 **Goal:** a typed, safe client for the Gramps Web API. No MCP yet.
 
-- [ ] `GrampsOptions` bound from environment, validated at startup (fail fast on missing URL or
+- [x] `GrampsOptions` bound from environment, validated at startup (fail fast on missing URL or
       credentials)
-- [ ] `GrampsApiClient` as a typed `HttpClient`
-- [ ] `GrampsAuthHandler` (`DelegatingHandler`): attach bearer token; on 401 refresh via
+- [x] `GrampsApiClient` as a typed `HttpClient`
+- [x] `GrampsAuthHandler` (`DelegatingHandler`): attach bearer token; on 401 refresh via
       `/api/token/refresh/`; if refresh fails, re-authenticate with the service account. Token
       cached in memory, never logged
-- [ ] `GrampsPermissions` — decode the JWT `permissions` claim to learn our real ceiling
-- [ ] Central request builder owning the **guardrails**: force `page >= 1`, cap `pagesize`,
+- [x] `GrampsPermissions` — decode the JWT `permissions` claim to learn our real ceiling
+- [x] Central request builder owning the **guardrails**: force `page >= 1`, cap `pagesize`,
       apply default `profile`, pass through `keys`/`skipkeys`, read `x-total-count`
-- [ ] Error translation: map Gramps 4xx/5xx to clean tool errors, passing GQL 422 messages
+- [x] Error translation: map Gramps 4xx/5xx to clean tool errors, passing GQL 422 messages
       through **verbatim** (they name the exact parse position and let a model self-correct)
-- [ ] Polly retry for transient 5xx/network faults
-- [ ] Unit tests with a mocked `HttpMessageHandler`: refresh-on-401, page coercion, pagesize cap,
+- [x] Retry for transient 5xx/network faults, via `Microsoft.Extensions.Http.Resilience`'s
+      standard resilience handler (Polly-based) rather than a hand-rolled pipeline
+- [x] Unit tests with a mocked `HttpMessageHandler`: refresh-on-401, page coercion, pagesize cap,
       permission parsing
 
 **Done when:** unit tests cover the guardrails and a smoke test authenticates against

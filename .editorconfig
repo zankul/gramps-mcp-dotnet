@@ -34,3 +34,7 @@ csharp_prefer_braces = true:warning
 
 # No SynchronizationContext in a server host, so ConfigureAwait(false) is noise
 dotnet_diagnostic.CA2007.severity = none
+
+[tests/**.cs]
+# xUnit tests use Method_Scenario_ExpectedOutcome so failures read as sentences
+dotnet_diagnostic.CA1707.severity = none
