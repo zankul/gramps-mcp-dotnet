@@ -38,12 +38,12 @@ Each phase is independently shippable and ends in a working state.
 
 - [x] `git init`, `.gitignore`, `.editorconfig`, MIT `LICENSE`, `README.md`, `.env.example`
 - [x] Private GitHub repo, pushed
-- [ ] Install .NET 10 SDK locally (not currently present on the dev machine — `dotnet` not found)
-- [ ] `GrampsMcp.sln` with `src/GrampsMcp.Server`, `tests/GrampsMcp.UnitTests`,
+- [x] Install .NET 10 SDK locally
+- [x] `GrampsMcp.sln` with `src/GrampsMcp.Server`, `tests/GrampsMcp.UnitTests`,
       `tests/GrampsMcp.IntegrationTests`
-- [ ] `Directory.Build.props`: `net10.0`, `Nullable=enable`, `TreatWarningsAsErrors=true`,
+- [x] `Directory.Build.props`: `net10.0`, `Nullable=enable`, `TreatWarningsAsErrors=true`,
       `ImplicitUsings=enable`
-- [ ] `.github/workflows/ci.yml` — restore, build, test on push and PR
+- [x] `.github/workflows/ci.yml` — restore, build, test on push and PR
 
 **Done when:** `dotnet build && dotnet test` passes locally and on CI.
 

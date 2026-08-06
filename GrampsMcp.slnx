@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GrampsMcp.Server/GrampsMcp.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GrampsMcp.IntegrationTests/GrampsMcp.IntegrationTests.csproj" />
+    <Project Path="tests/GrampsMcp.UnitTests/GrampsMcp.UnitTests.csproj" />
+  </Folder>
+</Solution>
