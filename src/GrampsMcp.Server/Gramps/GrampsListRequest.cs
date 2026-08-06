@@ -5,7 +5,7 @@ namespace GrampsMcp.Server.Gramps;
 /// <see cref="Page"/> to at least 1 and caps <see cref="PageSize"/> — Gramps Web treats
 /// <c>page=0</c> as "return everything unpaginated", which this type exists to prevent.
 /// </summary>
-public sealed record GrampsListRequest
+public record GrampsListRequest
 {
     public int Page { get; init; } = 1;
 
@@ -17,4 +17,7 @@ public sealed record GrampsListRequest
     public IReadOnlyList<string>? Keys { get; init; }
 
     public IReadOnlyList<string>? SkipKeys { get; init; }
+
+    /// <summary>Comma-delimited sort keys, prefix with "-" for descending (e.g. "surname,-birth").</summary>
+    public string? Sort { get; init; }
 }

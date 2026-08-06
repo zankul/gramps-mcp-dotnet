@@ -78,16 +78,16 @@ Each phase is independently shippable and ends in a working state.
 
 **Goal:** an agent can connect and explore the tree.
 
-- [ ] `Program.cs`: `AddMcpServer().WithHttpTransport().WithToolsFromAssembly()` + `app.MapMcp()`,
+- [x] `Program.cs`: `AddMcpServer().WithHttpTransport().WithToolsFromAssembly()` + `app.MapMcp()`,
       transport switched by `MCP_TRANSPORT`. Under stdio **all logging goes to stderr** — stdout
       is the protocol channel
-- [ ] `gramps_search(query, types[], page, pagesize, semantic)` — indexed, ~instant; *the*
+- [x] `gramps_search(query, types[], page, pagesize, semantic)` — indexed, ~instant; *the*
       default way to find anything
-- [ ] `gramps_get(type, id_or_handle, extend[], profile)` — accepts Gramps ID (`I0155`) or handle
-- [ ] `gramps_list(type, sort, page, pagesize, keys[])`
-- [ ] `gramps_tree_summary()` — object counts, versions, optional surname list
-- [ ] `gramps_types()` — default + custom vocabularies, so later writes use valid type strings
-- [ ] `/health` endpoint verifying Gramps connectivity
+- [x] `gramps_get(type, id_or_handle, extend[], profile)` — accepts Gramps ID (`I0155`) or handle
+- [x] `gramps_list(type, sort, page, pagesize, keys[])`
+- [x] `gramps_tree_summary()` — object counts, versions, optional surname list
+- [x] `gramps_types()` — default + custom vocabularies, so later writes use valid type strings
+- [x] `/health` endpoint verifying Gramps connectivity
 
 **Done when:** MCP Inspector lists the tools with correct schemas and a real client answers
 "who is in this tree?" end to end.

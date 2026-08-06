@@ -86,6 +86,85 @@ public class GrampsApiClientTests
         Assert.Equal("not found", exception.Message);
     }
 
+    [Fact]
+    public async Task GetAsync_WithRequest_OmitsPageAndPagesizeFromQuery()
+    {
+        var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"handle":"h1","gramps_id":"I0001"}""", Encoding.UTF8, "application/json"),
+        });
+        var client = CreateClient(handler);
+
+        await client.GetAsync<TestPerson>(
+            "/api/people/h1", new GrampsGetRequest { Extend = ["family_list"] }, CancellationToken.None);
+
+        var query = handler.Requests.Single().RequestUri!.Query;
+        Assert.Contains("extend=family_list", query);
+        Assert.DoesNotContain("page=", query);
+        Assert.DoesNotContain("pagesize=", query);
+    }
+
+    [Fact]
+    public async Task FindByGrampsIdAsync_OnMatch_ReturnsFirstItem()
+    {
+        var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""[{"handle":"h1","gramps_id":"I0155"}]""", Encoding.UTF8, "application/json"),
+        });
+        var client = CreateClient(handler);
+
+        var found = await client.FindByGrampsIdAsync<TestPerson>(
+            "/api/people/", "I0155", new GrampsGetRequest(), CancellationToken.None);
+
+        Assert.NotNull(found);
+        Assert.Equal("I0155", found.GrampsId);
+        Assert.Contains("gramps_id=I0155", handler.Requests.Single().RequestUri!.Query);
+    }
+
+    [Fact]
+    public async Task FindByGrampsIdAsync_OnNotFound_ReturnsDefaultRatherThanThrowing()
+    {
+        var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)
+        {
+            Content = new StringContent("""{"code":404,"status":"Not Found"}"""),
+        });
+        var client = CreateClient(handler);
+
+        var found = await client.FindByGrampsIdAsync<TestPerson>(
+            "/api/people/", "I9999999", new GrampsGetRequest(), CancellationToken.None);
+
+        Assert.Null(found);
+    }
+
+    [Fact]
+    public async Task SearchAsync_BuildsQueryAndTypeAndSemanticParameters()
+    {
+        var handler = new TestHttpMessageHandler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """[{"handle":"h1","object_type":"person","object":{},"rank":0,"score":1.5}]""",
+                    Encoding.UTF8, "application/json"),
+            };
+            response.Headers.Add("x-total-count", "1");
+            return response;
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.SearchAsync(
+            new GrampsSearchRequest { Query = "Sutherland", Types = ["person", "family"], Semantic = true },
+            CancellationToken.None);
+
+        Assert.Single(result.Items);
+        Assert.Equal("person", result.Items[0].ObjectType);
+        var query = handler.Requests.Single().RequestUri!.Query;
+        Assert.Contains("query=Sutherland", query);
+        Assert.Contains("type=person,family", query);
+        Assert.Contains("semantic=true", query);
+        Assert.DoesNotContain("profile=", query);
+    }
+
     private static GrampsApiClient CreateClient(HttpMessageHandler handler)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri(Options.ApiUrl) };
