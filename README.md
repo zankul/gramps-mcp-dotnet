@@ -1,0 +1,53 @@
+# gramps-mcp-dotnet
+
+An MCP (Model Context Protocol) server that gives AI agents structured access to a
+[Gramps Web](https://www.grampsweb.org/) genealogy database. Built with .NET 10 and shipped as a
+Docker container.
+
+It is a pure client of the existing [Gramps Web API](https://gramps-project.github.io/gramps-web-api/) —
+no Gramps internals, no direct database access.
+
+> **Status: early development.** See [docs/PLAN.md](docs/PLAN.md) for the phased build plan.
+
+## Design goals
+
+The hard part of wrapping a 127-endpoint REST API in MCP isn't coverage — it's being **fast,
+safe, and cheap in context**. Three measured facts from the Gramps Web API drive the design:
+
+- **`page=0` is the API default and means _unpaginated_.** A naive list call returns the entire
+  collection. This server forces `page >= 1` and caps `pagesize`, so no single tool call can
+  flood the model's context.
+- **GQL (Gramps Query Language) costs 10–15s per call regardless of result size**, because it
+  scans the whole database upstream. The indexed `/api/search/` endpoint answers in ~2s. So
+  search is the default path and GQL is an explicitly-labelled advanced escape hatch.
+- **`profile=self,families,events` resolves opaque handles into readable text** (dates, place
+  names, event summaries). That's the default response shape — the model gets usable answers
+  without chasing follow-up calls.
+
+## Safety posture
+
+- **Read-only by default.** Write tools are not registered at all unless explicitly enabled.
+- **Permission-aware.** The Gramps JWT carries a `permissions` claim; the server reads its own
+  real ceiling at startup and refuses to expose writes it cannot perform.
+- **Credentials from environment only** — never logged, never echoed into tool output.
+- **No binary media in context** — media tools return metadata, not file contents.
+
+## Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `GRAMPS_API_URL` | _(required)_ | Base URL of your Gramps Web instance |
+| `GRAMPS_USERNAME` | _(required)_ | Service account username |
+| `GRAMPS_PASSWORD` | _(required)_ | Service account password |
+| `GRAMPS_ALLOW_WRITES` | `false` | Master switch for all mutating tools |
+| `MCP_TRANSPORT` | `http` | `http` (container) or `stdio` (local/desktop) |
+| `MCP_API_KEY` | _(unset)_ | If set, required on every HTTP request |
+| `GRAMPS_MAX_PAGESIZE` | `100` | Hard cap on page size |
+| `GRAMPS_DEFAULT_PROFILE` | `self,families,events` | Default readable response shape |
+
+Copy `.env.example` to `.env` to get started.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). This project only speaks to the Gramps Web API over HTTP and
+links none of its code, so it is not bound by Gramps' AGPL licence.
