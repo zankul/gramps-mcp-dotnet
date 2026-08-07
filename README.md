@@ -73,8 +73,17 @@ Gramps Web instance (+ Redis/Celery) so `GRAMPS_ALLOW_WRITES=true` never points 
 disposable local tree. See the comments at the top of that file for the one-time owner-account
 setup. **Never** enable writes against `demo.grampsweb.org` or any other shared instance.
 
-A pre-built multi-arch image isn't published yet — build locally with `docker build -t
-gramps-mcp .` in the meantime.
+A pre-built multi-arch image (`linux/amd64`, `linux/arm64`) is published to GHCR on every push and
+release. It's currently private, so pulling it requires a GitHub PAT with `read:packages` scope:
+
+```bash
+echo $GITHUB_PAT | docker login ghcr.io -u <your-github-username> --password-stdin
+docker pull ghcr.io/zankul/gramps-mcp-dotnet:latest   # newest release
+# or: :edge for the latest main commit, :sha-<short> / :<branch-name> for a specific build
+docker run --rm -p 8080:8080 --env-file .env ghcr.io/zankul/gramps-mcp-dotnet:latest
+```
+
+To build locally instead, `docker build -t gramps-mcp .`.
 
 ## Connecting a client
 
