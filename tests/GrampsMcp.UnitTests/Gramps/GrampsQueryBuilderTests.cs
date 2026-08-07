@@ -165,6 +165,42 @@ public class GrampsQueryBuilderTests
         Assert.DoesNotContain(query, kv => kv.Key is "ancestors" or "offspring" or "dates");
     }
 
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(-2, 1)]
+    [InlineData(3, 3)]
+    public void BuildForGql_CoercesPageToAtLeastOne(int requestedPage, int expectedPage)
+    {
+        var query = GrampsQueryBuilder.BuildForGql(new GrampsGqlRequest { Gql = "surname = X", Page = requestedPage }, Options);
+
+        Assert.Equal(expectedPage.ToString(CultureInfo.InvariantCulture), Single(query, "page"));
+    }
+
+    [Fact]
+    public void BuildForGql_WhenPageSizeExceedsMax_CapsAtMax()
+    {
+        var query = GrampsQueryBuilder.BuildForGql(new GrampsGqlRequest { Gql = "surname = X", PageSize = 500 }, Options);
+
+        Assert.Equal("50", Single(query, "pagesize"));
+    }
+
+    [Fact]
+    public void BuildForGql_CommaJoinsKeys()
+    {
+        var query = GrampsQueryBuilder.BuildForGql(
+            new GrampsGqlRequest { Gql = "surname = X", Keys = ["gramps_id", "handle"] }, Options);
+
+        Assert.Equal("gramps_id,handle", Single(query, "keys"));
+    }
+
+    [Fact]
+    public void BuildForGql_DoesNotApplyProfileOrSort()
+    {
+        var query = GrampsQueryBuilder.BuildForGql(new GrampsGqlRequest { Gql = "surname = X" }, Options);
+
+        Assert.DoesNotContain(query, kv => kv.Key is "profile" or "sort" or "extend" or "skipkeys");
+    }
+
     private static string? Single(IReadOnlyList<KeyValuePair<string, string?>> query, string key) =>
         query.Single(kv => kv.Key == key).Value;
 }

@@ -133,13 +133,13 @@ setting it to `Debug`/`Trace` visibly increases verbosity beyond the current def
 
 **Goal:** the advanced escape hatch, correctly framed so the model reaches for it last.
 
-- [ ] `gramps_query(type, gql, keys[], page, pagesize)`
-- [ ] `gramps_count(type, gql)` — `pagesize=1`, returns only `x-total-count`
-- [ ] Tool descriptions state plainly: **slow (10–15s), single-type only, no sorting or
+- [x] `gramps_query(type, gql, keys[], page, pagesize)`
+- [x] `gramps_count(type, gql)` — `pagesize=1`, returns only `x-total-count`
+- [x] Tool descriptions state plainly: **slow (10–15s), single-type only, no sorting or
       aggregation; prefer `gramps_search`**
-- [ ] Description documents the quoting rule — values containing spaces must be quoted, and real
+- [x] Description documents the quoting rule — values containing spaces must be quoted, and real
       surnames look like `(6th Earl of) SUTHERLAND`
-- [ ] 422 parse errors returned verbatim for self-correction
+- [x] 422 parse errors returned verbatim for self-correction
 
 **Done when:** a complex query (`child_ref_list.length >= 3`) returns correct rows, and a
 deliberately malformed query returns a usable error.

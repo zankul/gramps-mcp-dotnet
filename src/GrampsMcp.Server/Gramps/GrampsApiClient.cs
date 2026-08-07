@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using GrampsMcp.Server.Configuration;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
@@ -19,6 +20,25 @@ public sealed class GrampsApiClient(HttpClient httpClient, IOptions<GrampsOption
     public Task<GrampsListResult<T>> ListTimelineAsync<T>(
         string path, GrampsTimelineRequest request, CancellationToken cancellationToken) =>
         ExecuteListAsync<T>(path, GrampsQueryBuilder.BuildForTimeline(request, options.Value), cancellationToken);
+
+    /// <summary>Filters a single object type's collection with a GQL expression, e.g.
+    /// <c>/api/people/?gql=child_ref_list.length%20%3E%3D%203</c>.</summary>
+    public Task<GrampsListResult<T>> QueryAsync<T>(
+        string path, GrampsGqlRequest request, CancellationToken cancellationToken)
+    {
+        var query = GrampsQueryBuilder.BuildForGql(request, options.Value);
+        query.Add(new KeyValuePair<string, string?>("gql", request.Gql));
+        return ExecuteListAsync<T>(path, query, cancellationToken);
+    }
+
+    /// <summary>Counts objects matching a GQL expression, at the cost of one request with
+    /// <c>pagesize=1</c> (every list response carries <c>x-total-count</c>).</summary>
+    public async Task<int> CountAsync(string path, string gql, CancellationToken cancellationToken)
+    {
+        var request = new GrampsGqlRequest { Gql = gql, PageSize = 1, Keys = ["handle"] };
+        var result = await QueryAsync<JsonElement>(path, request, cancellationToken);
+        return result.Total;
+    }
 
     public Task<GrampsListResult<GrampsSearchHit>> SearchAsync(
         GrampsSearchRequest request, CancellationToken cancellationToken)

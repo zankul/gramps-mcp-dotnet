@@ -13,7 +13,7 @@ internal static class GrampsQueryBuilder
 {
     public static IReadOnlyList<KeyValuePair<string, string?>> Build(GrampsListRequest request, GrampsOptions options)
     {
-        var query = BuildPagination(request, options);
+        var query = BuildPagination(request.Page, request.PageSize, options);
 
         AppendShapingParameters(query, request.Profile, extend: null, request.Keys, request.SkipKeys, options);
 
@@ -31,17 +31,29 @@ internal static class GrampsQueryBuilder
     /// and rejects the profile/extend/keys/skipkeys shaping params the other list endpoints accept.
     /// </summary>
     public static List<KeyValuePair<string, string?>> BuildForSearch(GrampsListRequest request, GrampsOptions options) =>
-        BuildPagination(request, options);
+        BuildPagination(request.Page, request.PageSize, options);
 
-    private static List<KeyValuePair<string, string?>> BuildPagination(GrampsListRequest request, GrampsOptions options)
+    /// <summary>
+    /// Builds query parameters for a GQL filter fetch (<c>/api/{type}/?gql=...</c>) — page/pagesize
+    /// and <c>keys</c> only, since GQL accepts no <c>profile</c>/<c>extend</c>/<c>skipkeys</c>/sort
+    /// (see <c>docs/PLAN.md</c> fact #5). The <c>gql</c> parameter itself is added by the caller.
+    /// </summary>
+    public static List<KeyValuePair<string, string?>> BuildForGql(GrampsGqlRequest request, GrampsOptions options)
     {
-        var page = Math.Max(1, request.Page);
-        var pageSize = Math.Clamp(request.PageSize ?? options.MaxPageSize, 1, options.MaxPageSize);
+        var query = BuildPagination(request.Page, request.PageSize, options);
+        AddCommaJoined(query, "keys", request.Keys);
+        return query;
+    }
+
+    private static List<KeyValuePair<string, string?>> BuildPagination(int page, int? pageSize, GrampsOptions options)
+    {
+        var resolvedPage = Math.Max(1, page);
+        var resolvedPageSize = Math.Clamp(pageSize ?? options.MaxPageSize, 1, options.MaxPageSize);
 
         return
         [
-            new("page", page.ToString(CultureInfo.InvariantCulture)),
-            new("pagesize", pageSize.ToString(CultureInfo.InvariantCulture)),
+            new("page", resolvedPage.ToString(CultureInfo.InvariantCulture)),
+            new("pagesize", resolvedPageSize.ToString(CultureInfo.InvariantCulture)),
         ];
     }
 
