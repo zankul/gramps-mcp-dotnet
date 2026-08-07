@@ -192,12 +192,17 @@ anyone with pull access, not a step to rush ahead of local verification.
 
 - [x] `docker-publish` CI job: `docker/setup-buildx-action` + `docker/build-push-action`, targets
       `linux/amd64,linux/arm64`
-- [x] Push to `ghcr.io/<owner>/gramps-mcp-dotnet` on every push (branches and `main`) and on
-      `vX.Y.Z` release tags, tagged with: `sha-<short>` and branch name (every push), `edge`
-      (main only, bleeding edge), and semver + `latest` (release tags only — a stable channel
-      that doesn't move on ordinary main pushes)
-- [x] Docker Scout CVE scan on the built image, blocking the push only on **critical** findings
-      (high/medium surface in the job summary but don't block)
+- [x] Push to `ghcr.io/<owner>/gramps-mcp-dotnet` on every push to `main` and on `vX.Y.Z` release
+      tags (not on other branches — that would publish images for unvalidated WIP commits ahead
+      of `ci.yml`, which only runs on `main` pushes and PRs). Tagged with: `sha-<short>` and
+      `edge` on every `main` push (bleeding edge), and semver + `latest` on release tags only —
+      `latest` uses `metadata-action`'s version-aware `flavor=auto`, so a backport release can't
+      drag it backward the way a naive "any release tag" rule would
+- [x] Docker Scout CVE scan runs against an immutable `sha-<short>` staging tag pushed first;
+      only if the scan clears (blocking on **critical** findings only; high/medium just surface
+      in the job summary) do the mutable `edge`/semver/`latest` tags get promoted (via
+      `docker buildx imagetools create`) to point at that digest — so nothing under a tag anyone
+      would normally pull skips the gate
 - [x] Gated behind an on/off repo variable (matching the existing `CLAUDE_REVIEW_ENABLED`
       pattern) so nothing publishes until explicitly enabled
 - [x] README: pull-and-run instructions using the published image, replacing the "build locally"
