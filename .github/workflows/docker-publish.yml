@@ -83,14 +83,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Local scan of the just-built image; no Docker Hub login needed for basic CVE analysis.
-      # Only critical findings fail the job — this runs on every push, not just releases, so a
-      # block-on-high threshold would be too disruptive against unpatched base-image CVEs. The
-      # staging tag above is already pushed (immutable, sha-scoped), but no mutable tag
-      # (branch/edge/latest) exists yet, so nothing "normal" is pullable until this passes.
+      # Scout's vulnerability database is gated behind Docker Hub auth even for local-image
+      # scans — without it every job fails with "user githubactions not entitled to use Docker
+      # Scout". Only critical findings fail the job — this runs on every push, not just
+      # releases, so a block-on-high threshold would be too disruptive against unpatched
+      # base-image CVEs. The staging tag above is already pushed (immutable, sha-scoped), but no
+      # mutable tag (branch/edge/latest) exists yet, so nothing "normal" is pullable until this
+      # passes.
       - name: Docker Scout CVE scan
         uses: docker/scout-action@v1
         with:
+          dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
           command: cves
           image: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
           exit-code: true
