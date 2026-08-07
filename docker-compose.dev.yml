@@ -1,15 +1,24 @@
 # Local dev stack: this server + a local Gramps Web instance, for exercising write tools.
 # Never point GRAMPS_ALLOW_WRITES=true at anything but this local grampsweb container.
 #
-# First run:
-#   docker compose -f docker-compose.dev.yml up -d grampsweb grampsweb_redis grampsweb_celery
-#   docker compose -f docker-compose.dev.yml exec grampsweb \
+# First run — start grampsweb by itself first and wait for it to finish starting before
+# bringing up grampsweb_celery: both run the same DB migration on a cold start, and running
+# them concurrently corrupts the (fresh, empty) SQLite user DB.
+#   docker compose -f docker-compose.dev.yml up -d grampsweb_redis grampsweb
+#   # wait for `docker compose -f docker-compose.dev.yml ps grampsweb` to show Up, then:
+#   docker compose -f docker-compose.dev.yml exec grampsweb sh -c '
+#     export GRAMPSWEB_SECRET_KEY=$(cat /app/secret/secret)
+#     cd /app/src
 #     python3 -m gramps_webapi --config /app/config/config.cfg user add \
-#       --fullname Owner --role 4 owner owner
-#   docker compose -f docker-compose.dev.yml up -d gramps-mcp
+#       --fullname Owner --role 4 owner owner'
+#   docker compose -f docker-compose.dev.yml up -d grampsweb_celery gramps-mcp
+#
+# (GRAMPSWEB_SECRET_KEY is normally exported by the container's own entrypoint script, which
+# `exec` bypasses — the secret itself is generated on first boot at /app/secret/secret.)
 #
 # Then set GRAMPS_API_URL=http://grampsweb:5000, GRAMPS_USERNAME=owner,
-# GRAMPS_PASSWORD=owner, GRAMPS_ALLOW_WRITES=true in .env.dev (gitignored).
+# GRAMPS_PASSWORD=owner, GRAMPS_ALLOW_WRITES=true in .env.dev (gitignored). Browse the tree
+# directly at http://localhost:8090.
 
 services:
   gramps-mcp:
@@ -24,6 +33,8 @@ services:
   grampsweb: &grampsweb
     image: ghcr.io/gramps-project/grampsweb:latest
     restart: unless-stopped
+    ports:
+      - "8090:5000"  # browse the tree directly at http://localhost:8090
     environment:
       GRAMPSWEB_TREE: "Gramps MCP Dev Tree"
       GRAMPSWEB_CELERY_CONFIG__broker_url: "redis://grampsweb_redis:6379/0"
@@ -43,6 +54,7 @@ services:
 
   grampsweb_celery:
     <<: *grampsweb
+    ports: []
     depends_on:
       - grampsweb
       - grampsweb_redis
