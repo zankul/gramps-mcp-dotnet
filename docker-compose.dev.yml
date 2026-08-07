@@ -1,0 +1,63 @@
+# Local dev stack: this server + a local Gramps Web instance, for exercising write tools.
+# Never point GRAMPS_ALLOW_WRITES=true at anything but this local grampsweb container.
+#
+# First run:
+#   docker compose -f docker-compose.dev.yml up -d grampsweb grampsweb_redis grampsweb_celery
+#   docker compose -f docker-compose.dev.yml exec grampsweb \
+#     python3 -m gramps_webapi --config /app/config/config.cfg user add \
+#       --fullname Owner --role 4 owner owner
+#   docker compose -f docker-compose.dev.yml up -d gramps-mcp
+#
+# Then set GRAMPS_API_URL=http://grampsweb:5000, GRAMPS_USERNAME=owner,
+# GRAMPS_PASSWORD=owner, GRAMPS_ALLOW_WRITES=true in .env.dev (gitignored).
+
+services:
+  gramps-mcp:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env.dev
+    depends_on:
+      - grampsweb
+
+  grampsweb: &grampsweb
+    image: ghcr.io/gramps-project/grampsweb:latest
+    restart: unless-stopped
+    environment:
+      GRAMPSWEB_TREE: "Gramps MCP Dev Tree"
+      GRAMPSWEB_CELERY_CONFIG__broker_url: "redis://grampsweb_redis:6379/0"
+      GRAMPSWEB_CELERY_CONFIG__result_backend: "redis://grampsweb_redis:6379/0"
+      GRAMPSWEB_RATELIMIT_STORAGE_URI: redis://grampsweb_redis:6379/1
+    depends_on:
+      - grampsweb_redis
+    volumes:
+      - gramps_users:/app/users
+      - gramps_index:/app/indexdir
+      - gramps_thumb_cache:/app/thumbnail_cache
+      - gramps_cache:/app/cache
+      - gramps_secret:/app/secret
+      - gramps_db:/root/.gramps/grampsdb
+      - gramps_media:/app/media
+      - gramps_tmp:/tmp
+
+  grampsweb_celery:
+    <<: *grampsweb
+    depends_on:
+      - grampsweb
+      - grampsweb_redis
+    command: celery -A gramps_webapi.celery worker --loglevel=INFO --concurrency=2
+
+  grampsweb_redis:
+    image: docker.io/valkey/valkey:8-alpine
+    restart: unless-stopped
+
+volumes:
+  gramps_users:
+  gramps_index:
+  gramps_thumb_cache:
+  gramps_cache:
+  gramps_secret:
+  gramps_db:
+  gramps_media:
+  gramps_tmp:

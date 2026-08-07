@@ -171,15 +171,36 @@ Never write to the public demo instance.
 
 **Goal:** `docker compose up` gives a working MCP server.
 
-- [ ] Multi-stage `Dockerfile`: `mcr.microsoft.com/dotnet/sdk:10.0` →
+- [x] Multi-stage `Dockerfile`: `mcr.microsoft.com/dotnet/sdk:10.0-alpine` →
       `mcr.microsoft.com/dotnet/aspnet:10.0-alpine`, non-root user
-- [ ] `HEALTHCHECK` against `/health`
-- [ ] `docker-compose.yml` (server only) and `docker-compose.dev.yml` (server + a local Gramps
+- [x] `HEALTHCHECK` against `/health`
+- [x] `docker-compose.yml` (server only) and `docker-compose.dev.yml` (server + a local Gramps
       Web instance to test writes against)
-- [ ] Multi-arch `amd64`/`arm64` build via buildx, published by CI
-- [ ] README: setup, full tool reference, client configuration examples
+- [x] README: setup, full tool reference, client configuration examples
 
 **Done when:** a fresh machine can go from clone to a connected agent using only the README.
+
+---
+
+### Phase 7 — Publish
+
+**Goal:** a versioned, multi-arch image anyone can pull without building it themselves.
+
+Only starts once Phase 6's image has been run and verified locally (built, healthcheck passing,
+smoke-tested against a real Gramps Web instance) — publishing is a one-way action visible to
+anyone with pull access, not a step to rush ahead of local verification.
+
+- [ ] `docker-publish` CI job: `docker/setup-buildx-action` + `docker/build-push-action`, targets
+      `linux/amd64,linux/arm64`
+- [ ] Push to `ghcr.io/<owner>/gramps-mcp-dotnet`, tagged with both the git ref (`sha-<short>`,
+      branch/tag name) and `latest` on `main`
+- [ ] Gated behind an on/off repo variable (matching the existing `CLAUDE_REVIEW_ENABLED`
+      pattern) so nothing publishes until explicitly enabled
+- [ ] README: pull-and-run instructions using the published image, replacing the "build locally"
+      note from Phase 6
+
+**Done when:** `docker pull ghcr.io/<owner>/gramps-mcp-dotnet:latest && docker run ...` works on a
+fresh machine with no local build step.
 
 ---
 

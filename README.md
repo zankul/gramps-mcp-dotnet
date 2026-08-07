@@ -57,6 +57,79 @@ safe, and cheap in context**. Three measured facts from the Gramps Web API drive
 
 Copy `.env.example` to `.env` to get started.
 
+## Running with Docker
+
+```bash
+cp .env.example .env   # fill in GRAMPS_API_URL / GRAMPS_USERNAME / GRAMPS_PASSWORD
+docker compose up --build
+```
+
+This builds the multi-stage `Dockerfile` (SDK to publish, `aspnet:10.0-alpine` to run, non-root
+user) and starts the server on `http://localhost:8080`, with `/health` wired up as the container
+healthcheck.
+
+To exercise write tools locally, use `docker-compose.dev.yml` instead — it also starts a local
+Gramps Web instance (+ Redis/Celery) so `GRAMPS_ALLOW_WRITES=true` never points at anything but a
+disposable local tree. See the comments at the top of that file for the one-time owner-account
+setup. **Never** enable writes against `demo.grampsweb.org` or any other shared instance.
+
+A pre-built multi-arch image isn't published yet — build locally with `docker build -t
+gramps-mcp .` in the meantime.
+
+## Connecting a client
+
+**Streamable HTTP** (the default transport, `MCP_TRANSPORT=http`) — point your MCP client at
+`http://<host>:8080/`. If `MCP_API_KEY` is set, the client must send it (consult your client's
+docs for how it passes custom headers/auth for HTTP MCP servers).
+
+**stdio** (local desktop clients such as Claude Desktop) — run the server with
+`MCP_TRANSPORT=stdio` and point the client at the process directly, e.g. for a `dotnet run`
+checkout:
+
+```json
+{
+  "mcpServers": {
+    "gramps": {
+      "command": "dotnet",
+      "args": ["run", "--project", "/path/to/gramps-mcp-dotnet/src/GrampsMcp.Server"],
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "GRAMPS_API_URL": "https://your-tree.example.com",
+        "GRAMPS_USERNAME": "your-service-account",
+        "GRAMPS_PASSWORD": "your-password"
+      }
+    }
+  }
+}
+```
+
+Or against a built container image with `docker run -i --rm -e MCP_TRANSPORT=stdio -e ... gramps-mcp`
+in place of the `dotnet run` command, if your client supports launching a container directly.
+
+## Tool reference
+
+Read tools are always registered. Write tools (marked **WRITE**) are only registered when
+`GRAMPS_ALLOW_WRITES=true` *and* the service account's JWT permissions actually grant the
+underlying Gramps operation.
+
+| Tool | Purpose |
+| --- | --- |
+| `gramps_search` | Indexed full-text search across the tree (~2s). The default way to find people, places, events, etc. |
+| `gramps_get` | Fetch a single object by type and Gramps ID or handle. |
+| `gramps_list` | Paginated, sorted listing of objects by type — for a deliberate browse rather than a lookup. |
+| `gramps_tree_summary` | Object counts per type, software/schema versions, optional surname list. |
+| `gramps_types` | Default and custom type vocabularies, so callers know which type strings are valid. |
+| `gramps_relation` | Kinship relationship between two people (e.g. "first cousin once removed"). |
+| `gramps_timeline` | Chronological event timeline for a person or family. |
+| `gramps_query` | GQL escape hatch for filters `gramps_search`/`gramps_list` can't express. Slow (10–15s), one type per call, no sorting/aggregation/joins — try `gramps_search` first. |
+| `gramps_count` | Count objects matching a GQL expression without returning rows. Same cost/constraints as `gramps_query`. |
+| `gramps_create` **WRITE** | Create a new object from a full payload matching the Gramps schema. |
+| `gramps_update` **WRITE** | Read-modify-write update via a JSON Merge Patch (RFC 7396). |
+| `gramps_delete` **WRITE** | Permanently delete an object. Destructive; recoverable via `gramps_history` + `gramps_undo` until further writes happen. |
+| `gramps_merge` **WRITE** | Merge two objects of the same type; the "titanic" is absorbed into the "phoenix" and deleted. |
+| `gramps_history` **WRITE** | List committed write transactions. |
+| `gramps_undo` **WRITE** | Reverse a previously committed transaction by ID. |
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE). This project only speaks to the Gramps Web API over HTTP and
