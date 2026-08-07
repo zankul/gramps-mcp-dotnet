@@ -12,6 +12,13 @@ on:
 
 jobs:
   claude-review:
+    # Kill switch: this review launches 4 sub-agents (2 of them Opus) per run and burns
+    # tokens fast. Set the repo/org variable CLAUDE_REVIEW_ENABLED to "false" to skip it
+    # without touching this file, e.g.:
+    #   gh variable set CLAUDE_REVIEW_ENABLED --body false --repo <owner>/<repo>
+    # Defaults to enabled when the variable is unset.
+    if: vars.CLAUDE_REVIEW_ENABLED != 'false'
+
     # Optional: Filter by PR author
     # if: |
     #   github.event.pull_request.user.login == 'external-contributor' ||
