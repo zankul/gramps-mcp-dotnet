@@ -22,6 +22,7 @@ public static class GrampsServiceCollectionExtensions
                 options.AllowWrites = configuration.GetValue("GRAMPS_ALLOW_WRITES", false);
                 options.MaxPageSize = configuration.GetValue("GRAMPS_MAX_PAGESIZE", 100);
                 options.DefaultProfile = configuration["GRAMPS_DEFAULT_PROFILE"] ?? "self,families,events";
+                options.LogLevel = configuration["MCP_LOG_LEVEL"];
             })
             .ValidateDataAnnotations()
             .ValidateOnStart();

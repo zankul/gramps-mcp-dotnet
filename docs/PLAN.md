@@ -99,17 +99,17 @@ Each phase is independently shippable and ends in a working state.
 **Goal:** logging is configurable at deploy time — verbosity can be adjusted, or turned off
 entirely — without editing `appsettings.json`.
 
-- [ ] `MCP_LOG_LEVEL` env var (`None`/`Critical`/`Error`/`Warning`/`Information`/`Debug`/`Trace`),
+- [x] `MCP_LOG_LEVEL` env var (`None`/`Critical`/`Error`/`Warning`/`Information`/`Debug`/`Trace`),
       read the same way other options are — via `GrampsOptions`-style explicit `IConfiguration`
       pull, validated at startup
-- [ ] Applied to `builder.Logging` on **both** transports: stdio's currently-hardcoded
+- [x] Applied to `builder.Logging` on **both** transports: stdio's currently-hardcoded
       `LogToStandardErrorThreshold = Trace` (`Program.cs:21`) becomes driven by this setting, and
       the HTTP path (which today doesn't touch `builder.Logging` at all) gets the same override
-- [ ] `MCP_LOG_LEVEL=None` disables logging entirely (maps to `LogLevel.None`)
-- [ ] Default preserves current behaviour if unset (stdio: `Trace` to stderr; HTTP: whatever
+- [x] `MCP_LOG_LEVEL=None` disables logging entirely (maps to `LogLevel.None`)
+- [x] Default preserves current behaviour if unset (stdio: `Trace` to stderr; HTTP: whatever
       `appsettings.json` says) so this is additive, not a breaking change
-- [ ] README `## Configuration` table and `.env.example` gain an `MCP_LOG_LEVEL` row/entry
-- [ ] Unit test covering the new option's validation (valid level names accepted, invalid
+- [x] README `## Configuration` table and `.env.example` gain an `MCP_LOG_LEVEL` row/entry
+- [x] Unit test covering the new option's validation (valid level names accepted, invalid
       rejected) — first such test if no `GrampsOptionsTests.cs` exists yet
 
 **Done when:** setting `MCP_LOG_LEVEL=None` produces no log output on either transport, and

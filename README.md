@@ -42,6 +42,7 @@ safe, and cheap in context**. Three measured facts from the Gramps Web API drive
 | `GRAMPS_ALLOW_WRITES` | `false` | Master switch for all mutating tools |
 | `MCP_TRANSPORT` | `http` | `http` (container) or `stdio` (local/desktop) |
 | `MCP_API_KEY` | _(unset)_ | If set, required on every HTTP request |
+| `MCP_LOG_LEVEL` | _(unset)_ | `None`/`Critical`/`Error`/`Warning`/`Information`/`Debug`/`Trace`. Unset preserves current per-transport defaults |
 | `GRAMPS_MAX_PAGESIZE` | `100` | Hard cap on page size |
 | `GRAMPS_DEFAULT_PROFILE` | `self,families,events` | Default readable response shape |
 
