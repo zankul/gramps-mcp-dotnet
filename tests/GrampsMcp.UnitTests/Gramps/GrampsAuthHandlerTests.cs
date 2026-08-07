@@ -62,6 +62,42 @@ public class GrampsAuthHandlerTests
         Assert.Equal(2, authCallCount); // initial login + one refresh
     }
 
+    [Fact]
+    public async Task SendAsync_On401WithRequestBody_RetriesWithBodyAndContentTypeIntact()
+    {
+        var authHandlerBackend = new TestHttpMessageHandler(request =>
+            request.RequestUri!.AbsolutePath switch
+            {
+                "/api/token/" => JsonResponse(HttpStatusCode.OK,
+                    """{"access_token":"token1","refresh_token":"refresh1"}"""),
+                "/api/token/refresh/" => JsonResponse(HttpStatusCode.OK, """{"access_token":"token2"}"""),
+                _ => new HttpResponseMessage(HttpStatusCode.NotFound),
+            });
+        var tokenStore = CreateTokenStore(authHandlerBackend);
+
+        var apiCallCount = 0;
+        var apiHandler = new TestHttpMessageHandler(_ =>
+        {
+            apiCallCount++;
+            return apiCallCount == 1
+                ? new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                : new HttpResponseMessage(HttpStatusCode.OK);
+        });
+        using var client = CreateClient(tokenStore, apiHandler);
+
+        var response = await client.PostAsync(
+            "/api/people/", new StringContent("""{"gramps_id":"I0001"}""", Encoding.UTF8, "application/json"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, apiHandler.Requests.Count);
+
+        var retriedRequest = apiHandler.Requests[1];
+        Assert.Equal("token2", retriedRequest.Headers.Authorization!.Parameter);
+        Assert.NotNull(retriedRequest.Content);
+        Assert.Equal("application/json", retriedRequest.Content!.Headers.ContentType!.MediaType);
+        Assert.Equal("""{"gramps_id":"I0001"}""", await retriedRequest.Content.ReadAsStringAsync());
+    }
+
     private static GrampsTokenStore CreateTokenStore(HttpMessageHandler authBackend)
     {
         var options = Options.Create(new GrampsOptions
