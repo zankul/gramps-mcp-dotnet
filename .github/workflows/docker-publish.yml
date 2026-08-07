@@ -1,0 +1,110 @@
+name: Docker Publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+
+jobs:
+  publish:
+    # Kill switch: set the repo/org variable DOCKER_PUBLISH_ENABLED to "false" to skip it
+    # without touching this file, e.g.:
+    #   gh variable set DOCKER_PUBLISH_ENABLED --body false --repo <owner>/<repo>
+    # Defaults to enabled when the variable is unset.
+    if: vars.DOCKER_PUBLISH_ENABLED != 'false'
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          # metadata-action's flavor=auto for "latest" compares this tag against sibling
+          # semver tags to decide whether latest should move, which needs full tag history.
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # edge tracks the latest main commit. "latest" uses metadata-action's default
+      # flavor=auto, which only points it at the highest semver tag seen so far, so a
+      # backport release on an older line can't drag it backward.
+      - name: Compute image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=ref,event=branch
+            type=raw,value=edge,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      # Split the computed tags: the immutable sha-<short> tag is pushed first and scanned;
+      # only if Scout clears it do the mutable branch/edge/semver/latest tags get promoted to
+      # point at that same digest, so nothing pullable under a mutable tag skips the gate.
+      - name: Split tags into staging vs promoted
+        id: split
+        run: |
+          tags="${{ steps.meta.outputs.tags }}"
+          staging=$(echo "$tags" | grep ':sha-' | head -n1)
+          promoted=$(echo "$tags" | grep -v ':sha-' || true)
+          echo "staging=$staging" >> "$GITHUB_OUTPUT"
+          {
+            echo "promoted<<TAGS_EOF"
+            echo "$promoted"
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push (staging tag)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.split.outputs.staging }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Scout's vulnerability database is gated behind Docker Hub auth even for local-image
+      # scans — without it every job fails with "user githubactions not entitled to use Docker
+      # Scout". Only critical findings fail the job — this runs on every push, not just
+      # releases, so a block-on-high threshold would be too disruptive against unpatched
+      # base-image CVEs. The staging tag above is already pushed (immutable, sha-scoped), but no
+      # mutable tag (branch/edge/latest) exists yet, so nothing "normal" is pullable until this
+      # passes.
+      - name: Docker Scout CVE scan
+        uses: docker/scout-action@v1
+        with:
+          dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
+          command: cves
+          image: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+          exit-code: true
+          only-severities: critical
+
+      - name: Promote scanned image to remaining tags
+        if: steps.split.outputs.promoted != ''
+        run: |
+          digest="${{ steps.build.outputs.digest }}"
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            docker buildx imagetools create -t "$tag" "ghcr.io/${{ github.repository }}@${digest}"
+          done <<< "${{ steps.split.outputs.promoted }}"
