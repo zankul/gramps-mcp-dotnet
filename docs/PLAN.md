@@ -150,15 +150,15 @@ deliberately malformed query returns a usable error.
 
 **Goal:** full CRUD that stays invisible until explicitly switched on.
 
-- [ ] Write tools registered **only** when `GRAMPS_ALLOW_WRITES=true` *and* the JWT permission
+- [x] Write tools registered **only** when `GRAMPS_ALLOW_WRITES=true` *and* the JWT permission
       claim actually grants the right (not registered = not planned around by the model)
-- [ ] `gramps_create(type, payload)`
-- [ ] `gramps_update(type, handle, patch)` — read-modify-write: GET the full object, apply the
+- [x] `gramps_create(type, payload)`
+- [x] `gramps_update(type, handle, patch)` — read-modify-write: GET the full object, apply the
       merge patch, `PUT` it back. Required, because `PUT` **replaces** the whole object
-- [ ] `gramps_delete(type, handle)`
-- [ ] `gramps_merge(type, keep_handle, discard_handle)`
-- [ ] `gramps_history()` / `gramps_undo(transaction_id)` — `/api/transactions/history/{id}/undo`
-- [ ] Startup warning if writes are enabled but the account lacks `AddObject`/`EditObject`
+- [x] `gramps_delete(type, handle)`
+- [x] `gramps_merge(type, keep_handle, discard_handle)`
+- [x] `gramps_history()` / `gramps_undo(transaction_id)` — `/api/transactions/history/{id}/undo`
+- [x] Startup warning if writes are enabled but the account lacks `AddObject`/`EditObject`
 
 **Testing constraint:** write paths are exercised **only** against a local Gramps Web container.
 Never write to the public demo instance.

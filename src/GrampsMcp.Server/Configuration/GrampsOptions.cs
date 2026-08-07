@@ -14,8 +14,6 @@ public sealed class GrampsOptions : IValidatableObject
     [Required(AllowEmptyStrings = false)]
     public string Password { get; set; } = string.Empty;
 
-    public bool AllowWrites { get; set; }
-
     [Range(1, int.MaxValue)]
     public int MaxPageSize { get; set; } = 100;
 

@@ -122,7 +122,19 @@ facts about the live Gramps Web API (also in that doc) — not arbitrary default
 
 ## Notes for future phases
 
-Phases 3–6 (graph tools, GQL tools, gated writes, Docker packaging) are not yet implemented — see
-`docs/PLAN.md` for their designed shape before starting one. Notably: writes must read-modify-write
-(`PUT` replaces the whole object), the write path must never target the public demo instance, and
-`gramps_query`/`gramps_count` descriptions must explicitly steer models toward `gramps_search`.
+Phase 6 (Docker packaging) is not yet implemented — see `docs/PLAN.md` for its designed shape
+before starting it.
+
+Phase 5 (writes) is implemented but worth knowing the shape of: write tools (`gramps_create`,
+`gramps_update`, `gramps_delete`, `gramps_merge`, `gramps_history`, `gramps_undo`) carry a
+`[GrampsWriteTool(...requiredPermissions)]` attribute naming the Gramps JWT permission(s) they
+need. `Program.cs`'s `ResolveToolTypesAsync` excludes any type carrying the attribute from the
+assembly scan — a positive marker on the type, not membership in a hand-maintained list, so a
+write tool always fails closed (stays unregistered) rather than leaking through as an ungated read
+tool. `GrampsWriteTools.All` is discovered by reflecting over the same attribute, so it and the
+read-tool exclusion can't drift apart the way two independently maintained lists could. Extending
+or adding a write tool means only attributing the class with `[GrampsWriteTool("SomePermission")]`
+— nothing else to remember to update. Registration then adds back whichever tools
+`GrampsWriteTools.SelectRegistrable` permits, based on a one-off JWT permission check made before
+the host is built. Never exercise write paths against the public demo instance — a local Gramps
+Web container only.

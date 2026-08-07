@@ -20,6 +20,16 @@ internal static partial class GrampsIdentifiers
     /// </summary>
     public static bool IsValidHandle(string idOrHandle) => HandlePattern().IsMatch(idOrHandle);
 
+    /// <summary>Throws <see cref="ArgumentException"/> if <paramref name="handle"/> is not a valid
+    /// handle — the guard every write tool needs before concatenating a handle into a URL path.</summary>
+    public static void EnsureValidHandle(string handle, string paramName)
+    {
+        if (!IsValidHandle(handle))
+        {
+            throw new ArgumentException($"'{handle}' is not a valid handle.", paramName);
+        }
+    }
+
     [GeneratedRegex(@"^[A-Za-z]+\d+$")]
     private static partial Regex GrampsIdPattern();
 

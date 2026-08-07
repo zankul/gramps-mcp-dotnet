@@ -106,6 +106,23 @@ internal static class GrampsQueryBuilder
         return query;
     }
 
+    /// <summary>
+    /// Builds query parameters for <c>/api/transactions/history/</c> — page/pagesize/sort only,
+    /// since the endpoint has no notion of profile/extend/keys and rejects unrecognised params.
+    /// Same pagination guardrail as <see cref="Build"/>: an omitted <c>page</c> means "unpaginated".
+    /// </summary>
+    public static IReadOnlyList<KeyValuePair<string, string?>> BuildForHistory(GrampsHistoryRequest request, GrampsOptions options)
+    {
+        var query = BuildPagination(request.Page, request.PageSize, options);
+
+        if (!string.IsNullOrEmpty(request.Sort))
+        {
+            query.Add(new KeyValuePair<string, string?>("sort", request.Sort));
+        }
+
+        return query;
+    }
+
     private static void AppendShapingParameters(
         List<KeyValuePair<string, string?>> query,
         string? profile,

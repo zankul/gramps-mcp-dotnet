@@ -26,9 +26,18 @@ safe, and cheap in context**. Three measured facts from the Gramps Web API drive
 
 ## Safety posture
 
-- **Read-only by default.** Write tools are not registered at all unless explicitly enabled.
+- **Read-only by default.** Write tools (`gramps_create`, `gramps_update`, `gramps_delete`,
+  `gramps_merge`, `gramps_history`, `gramps_undo`) are not registered at all unless
+  `GRAMPS_ALLOW_WRITES=true`.
 - **Permission-aware.** The Gramps JWT carries a `permissions` claim; the server reads its own
-  real ceiling at startup and refuses to expose writes it cannot perform.
+  real ceiling at startup and registers each write tool only if the service account actually holds
+  the permission it needs (e.g. `gramps_delete` needs `DeleteObject`) — an unregistered tool can't
+  be discovered or invoked at all, not merely refused at call time.
+- **Updates are read-modify-write.** Gramps Web's `PUT` replaces the whole object, so
+  `gramps_update` fetches the current object, applies your patch as a JSON Merge Patch (RFC 7396),
+  and writes the merged result back.
+- **Undoable.** Every write is a transaction Gramps Web tracks; `gramps_history` lists them and
+  `gramps_undo` reverses one.
 - **Credentials from environment only** — never logged, never echoed into tool output.
 - **No binary media in context** — media tools return metadata, not file contents.
 
