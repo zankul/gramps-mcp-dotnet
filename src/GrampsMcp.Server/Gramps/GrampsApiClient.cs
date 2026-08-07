@@ -15,6 +15,11 @@ public sealed class GrampsApiClient(HttpClient httpClient, IOptions<GrampsOption
         string path, GrampsListRequest request, CancellationToken cancellationToken) =>
         ExecuteListAsync<T>(path, GrampsQueryBuilder.Build(request, options.Value), cancellationToken);
 
+    /// <summary>Fetches a paginated person/family timeline, e.g. <c>/api/people/{handle}/timeline</c>.</summary>
+    public Task<GrampsListResult<T>> ListTimelineAsync<T>(
+        string path, GrampsTimelineRequest request, CancellationToken cancellationToken) =>
+        ExecuteListAsync<T>(path, GrampsQueryBuilder.BuildForTimeline(request, options.Value), cancellationToken);
+
     public Task<GrampsListResult<GrampsSearchHit>> SearchAsync(
         GrampsSearchRequest request, CancellationToken cancellationToken)
     {

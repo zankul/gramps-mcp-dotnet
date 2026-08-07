@@ -56,6 +56,44 @@ internal static class GrampsQueryBuilder
         return query;
     }
 
+    /// <summary>
+    /// Builds query parameters for a person/family timeline fetch. Same pagination guardrail as
+    /// <see cref="Build"/> — an omitted <c>page</c> means "unpaginated" on this endpoint too.
+    /// </summary>
+    public static IReadOnlyList<KeyValuePair<string, string?>> BuildForTimeline(GrampsTimelineRequest request, GrampsOptions options)
+    {
+        var page = Math.Max(1, request.Page);
+        var pageSize = Math.Clamp(request.PageSize ?? options.MaxPageSize, 1, options.MaxPageSize);
+
+        var query = new List<KeyValuePair<string, string?>>
+        {
+            new("page", page.ToString(CultureInfo.InvariantCulture)),
+            new("pagesize", pageSize.ToString(CultureInfo.InvariantCulture)),
+        };
+
+        AddCommaJoined(query, "keys", request.Keys);
+        AddCommaJoined(query, "skipkeys", request.SkipKeys);
+        AddCommaJoined(query, "event_classes", request.EventClasses);
+        AddCommaJoined(query, "events", request.Events);
+
+        if (!string.IsNullOrEmpty(request.Dates))
+        {
+            query.Add(new KeyValuePair<string, string?>("dates", request.Dates));
+        }
+
+        if (request.Ancestors is { } ancestors)
+        {
+            query.Add(new KeyValuePair<string, string?>("ancestors", ancestors.ToString(CultureInfo.InvariantCulture)));
+        }
+
+        if (request.Offspring is { } offspring)
+        {
+            query.Add(new KeyValuePair<string, string?>("offspring", offspring.ToString(CultureInfo.InvariantCulture)));
+        }
+
+        return query;
+    }
+
     private static void AppendShapingParameters(
         List<KeyValuePair<string, string?>> query,
         string? profile,

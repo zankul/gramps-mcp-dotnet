@@ -121,9 +121,9 @@ setting it to `Debug`/`Trace` visibly increases verbosity beyond the current def
 
 **Goal:** the genealogy-specific questions a filter cannot express.
 
-- [ ] `gramps_relation(person_a, person_b)` — `/api/relations/{a}/{b}` kinship calculation
-- [ ] `gramps_timeline(type, id_or_handle, ...)` — person and family timelines
-- [ ] Both accept Gramps IDs and resolve to handles internally
+- [x] `gramps_relation(person_a, person_b)` — `/api/relations/{a}/{b}` kinship calculation
+- [x] `gramps_timeline(type, id_or_handle, ...)` — person and family timelines
+- [x] Both accept Gramps IDs and resolve to handles internally
 
 **Done when:** "how are X and Y related?" returns a correct kinship string against the demo tree.
 

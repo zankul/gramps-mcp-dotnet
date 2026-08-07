@@ -115,6 +115,56 @@ public class GrampsQueryBuilderTests
         Assert.Equal("family_list,event_ref_list", Single(query, "extend"));
     }
 
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(-3, 1)]
+    [InlineData(4, 4)]
+    public void BuildForTimeline_CoercesPageToAtLeastOne(int requestedPage, int expectedPage)
+    {
+        var query = GrampsQueryBuilder.BuildForTimeline(new GrampsTimelineRequest { Page = requestedPage }, Options);
+
+        Assert.Equal(expectedPage.ToString(CultureInfo.InvariantCulture), Single(query, "page"));
+    }
+
+    [Fact]
+    public void BuildForTimeline_WhenPageSizeExceedsMax_CapsAtMax()
+    {
+        var query = GrampsQueryBuilder.BuildForTimeline(new GrampsTimelineRequest { PageSize = 500 }, Options);
+
+        Assert.Equal("50", Single(query, "pagesize"));
+    }
+
+    [Fact]
+    public void BuildForTimeline_CommaJoinsEventClassesAndEvents()
+    {
+        var query = GrampsQueryBuilder.BuildForTimeline(
+            new GrampsTimelineRequest { EventClasses = ["vital", "family"], Events = ["Birth"] },
+            Options);
+
+        Assert.Equal("vital,family", Single(query, "event_classes"));
+        Assert.Equal("Birth", Single(query, "events"));
+    }
+
+    [Fact]
+    public void BuildForTimeline_PassesThroughDatesAncestorsAndOffspring()
+    {
+        var query = GrampsQueryBuilder.BuildForTimeline(
+            new GrampsTimelineRequest { Dates = "1900/1/1-", Ancestors = 2, Offspring = 3 },
+            Options);
+
+        Assert.Equal("1900/1/1-", Single(query, "dates"));
+        Assert.Equal("2", Single(query, "ancestors"));
+        Assert.Equal("3", Single(query, "offspring"));
+    }
+
+    [Fact]
+    public void BuildForTimeline_WhenAncestorsAndOffspringUnspecified_OmitsThem()
+    {
+        var query = GrampsQueryBuilder.BuildForTimeline(new GrampsTimelineRequest(), Options);
+
+        Assert.DoesNotContain(query, kv => kv.Key is "ancestors" or "offspring" or "dates");
+    }
+
     private static string? Single(IReadOnlyList<KeyValuePair<string, string?>> query, string key) =>
         query.Single(kv => kv.Key == key).Value;
 }
