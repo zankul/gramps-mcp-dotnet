@@ -12,6 +12,12 @@
 # grampsweb and grampsweb_celery try to create that schema concurrently on a cold start and
 # corrupt it ("sqlite3.OperationalError: table person already exists"). grampsweb_celery and
 # gramps-mcp wait for grampsweb_init to report healthy before starting.
+#
+# Set GRAMPS_SEED_EXAMPLE_DATA=true to have grampsweb_init also import the example.gramps
+# dataset that ships inside the grampsweb image itself (2000+ people, families, events —
+# useful for exercising gramps_search/gramps_relation/gramps_timeline against something
+# realistic instead of an empty tree). Only happens once per empty tree: grampsweb_init checks
+# the object counts first and skips the import if the tree already has people in it.
 
 services:
   gramps-mcp:
@@ -34,6 +40,7 @@ services:
       GRAMPSWEB_CELERY_CONFIG__broker_url: "redis://grampsweb_redis:6379/0"
       GRAMPSWEB_CELERY_CONFIG__result_backend: "redis://grampsweb_redis:6379/0"
       GRAMPSWEB_RATELIMIT_STORAGE_URI: redis://grampsweb_redis:6379/1
+      GRAMPS_SEED_EXAMPLE_DATA: ${GRAMPS_SEED_EXAMPLE_DATA:-false}
     depends_on:
       - grampsweb_redis
     volumes:
@@ -76,6 +83,49 @@ services:
         cd /app/src
         python3 -m gramps_webapi --config /app/config/config.cfg user add \
           --fullname Owner --role 4 owner owner || true
+
+        if [ "$GRAMPS_SEED_EXAMPLE_DATA" = "true" ]; then
+          python3 <<'PYEOF'
+        import json
+        import urllib.request
+
+        def api(method, path, token=None, data=None, content_type=None):
+            headers = {}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            if content_type:
+                headers["Content-Type"] = content_type
+            req = urllib.request.Request(
+                f"http://grampsweb:5000{path}", data=data, headers=headers, method=method
+            )
+            with urllib.request.urlopen(req) as resp:
+                body = resp.read()
+                return json.loads(body) if body else None
+
+        token = api(
+            "POST",
+            "/api/token/",
+            data=json.dumps({"username": "owner", "password": "owner"}).encode(),
+            content_type="application/json",
+        )["access_token"]
+
+        people = api("GET", "/api/metadata/", token=token)["object_counts"]["people"]
+        if people == 0:
+            with open("/venv/share/doc/gramps/example/gramps/example.gramps", "rb") as f:
+                payload = f.read()
+            api(
+                "POST",
+                "/api/importers/gramps/file",
+                token=token,
+                data=payload,
+                content_type="application/octet-stream",
+            )
+            print("Queued import of bundled example.gramps dataset (async, via Celery).")
+        else:
+            print(f"Tree already has {people} people - skipping example dataset import.")
+        PYEOF
+        fi
+
         touch /run/init-done
         sleep infinity
     healthcheck:

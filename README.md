@@ -70,8 +70,14 @@ healthcheck.
 
 To exercise write tools locally, use `docker-compose.dev.yml` instead — it also starts a local
 Gramps Web instance (+ Redis/Celery) so `GRAMPS_ALLOW_WRITES=true` never points at anything but a
-disposable local tree. See the comments at the top of that file for the one-time owner-account
-setup. **Never** enable writes against `demo.grampsweb.org` or any other shared instance.
+disposable local tree. `docker compose -f docker-compose.dev.yml up` is enough on its own; owner
+account setup is automatic. **Never** enable writes against `demo.grampsweb.org` or any other
+shared instance.
+
+Set `GRAMPS_SEED_EXAMPLE_DATA=true` to have the dev stack import the `example.gramps` demo
+dataset bundled inside the `grampsweb` image (2000+ people, families, and events) instead of
+starting from an empty tree — useful for exercising `gramps_search`/`gramps_relation`/
+`gramps_timeline` against something realistic.
 
 A pre-built multi-arch image (`linux/amd64`, `linux/arm64`) is published to GHCR on every push to
 `main` and on version tags. It's currently private, so pulling it requires a GitHub PAT with
