@@ -31,7 +31,8 @@ local Docker stack; Demo hits the public `demo.grampsweb.org`). `tests/default.r
 `dotnet test` only runs what works offline with no setup. **A CLI `--filter` does not override
 that exclusion — vstest ANDs it with the runsettings filter**, so `dotnet test --filter "Tier=Live"`
 alone silently matches nothing. To opt into a tier, clear the runsettings property first:
-`dotnet test --filter "Tier=Live" -p:RunSettingsFilePath=`.
+`dotnet test --filter "Tier=Live" -p:RunSettingsFilePath=`. See `docs/testing.md` for the Live
+tier's stack (`docker-compose.test.yml`), measured timings, and the dataset fingerprint.
 
 CI (`.github/workflows/ci.yml`) runs, on every push/PR: restore → `dotnet format --verify-no-changes`
 → build (Release, warnings-as-errors) → test (excluding Live/Demo, with Cobertura coverage
