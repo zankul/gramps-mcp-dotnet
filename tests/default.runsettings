@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <!--
+    Default filter for a bare "dotnet test" run (no explicit filter flag): excludes the opt-in
+    Live and Demo tiers, which require a running Docker stack or the public demo.grampsweb.org
+    instance respectively.
+
+    A CLI filter flag does NOT override this: vstest ANDs the two filters together, so a lone
+    "Tier=Live" filter silently matches nothing while this file is in effect. Opting into a tier
+    means clearing this file's RunSettingsFilePath property on the command line first; see
+    CLAUDE.md's Commands section for the exact incantation.
+  -->
+  <RunConfiguration>
+    <TestCaseFilter>Tier!=Live&amp;Tier!=Demo</TestCaseFilter>
+  </RunConfiguration>
+</RunSettings>

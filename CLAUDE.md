@@ -20,14 +20,23 @@ tool registration, or response shaping should be checked against the guardrails 
 ```bash
 dotnet build                                     # build
 dotnet format --verify-no-changes                # CI's format gate — run before pushing
-dotnet test                                      # all tests
+dotnet test                                      # fast offline tests only (see below)
 dotnet test --filter "FullyQualifiedName~GrampsQueryBuilderTests"   # a single test class
 dotnet test --filter "Method_Scenario_ExpectedOutcome"              # a single test
 ```
 
+Tests are split into tiers via `[Trait("Tier", "Live")]` / `[Trait("Tier", "Demo")]` (Live needs a
+local Docker stack; Demo hits the public `demo.grampsweb.org`). `tests/default.runsettings`
+(wired up via `RunSettingsFilePath` in `Directory.Build.props`) excludes both by default, so a bare
+`dotnet test` only runs what works offline with no setup. **A CLI `--filter` does not override
+that exclusion — vstest ANDs it with the runsettings filter**, so `dotnet test --filter "Tier=Live"`
+alone silently matches nothing. To opt into a tier, clear the runsettings property first:
+`dotnet test --filter "Tier=Live" -p:RunSettingsFilePath=`.
+
 CI (`.github/workflows/ci.yml`) runs, on every push/PR: restore → `dotnet format --verify-no-changes`
-→ build (Release, warnings-as-errors) → test, plus a separate job checking for known-vulnerable
-NuGet packages via `dotnet list package --vulnerable`.
+→ build (Release, warnings-as-errors) → test (excluding Live/Demo, with Cobertura coverage
+collected and uploaded as a build artifact) → a separate job checking for known-vulnerable NuGet
+packages via `dotnet list package --vulnerable`.
 
 `TreatWarningsAsErrors` and `EnforceCodeStyleInBuild` are on (`Directory.Build.props`), so style
 violations and analyzer warnings — including SecurityCodeScan findings — fail the build, not just

@@ -28,7 +28,17 @@ jobs:
         run: dotnet build --no-restore --configuration Release
 
       - name: Test
-        run: dotnet test --no-build --configuration Release
+        run: >
+          dotnet test --no-build --configuration Release
+          --filter "Tier!=Live&Tier!=Demo"
+          --collect:"XPlat Code Coverage"
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: "**/TestResults/**/coverage.cobertura.xml"
+          if-no-files-found: error
 
   vulnerable-packages:
     runs-on: ubuntu-latest
