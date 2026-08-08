@@ -8,6 +8,7 @@
     <LangVersion>latest</LangVersion>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <RunSettingsFilePath>$(MSBuildThisFileDirectory)tests/default.runsettings</RunSettingsFilePath>
   </PropertyGroup>
 
 </Project>
