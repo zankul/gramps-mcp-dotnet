@@ -1,24 +1,17 @@
 # Local dev stack: this server + a local Gramps Web instance, for exercising write tools.
 # Never point GRAMPS_ALLOW_WRITES=true at anything but this local grampsweb container.
 #
-# First run — start grampsweb by itself first and wait for it to finish starting before
-# bringing up grampsweb_celery: both run the same DB migration on a cold start, and running
-# them concurrently corrupts the (fresh, empty) SQLite user DB.
-#   docker compose -f docker-compose.dev.yml up -d grampsweb_redis grampsweb
-#   # wait for `docker compose -f docker-compose.dev.yml ps grampsweb` to show Up, then:
-#   docker compose -f docker-compose.dev.yml exec grampsweb sh -c '
-#     export GRAMPSWEB_SECRET_KEY=$(cat /app/secret/secret)
-#     cd /app/src
-#     python3 -m gramps_webapi --config /app/config/config.cfg user add \
-#       --fullname Owner --role 4 owner owner'
-#   docker compose -f docker-compose.dev.yml up -d grampsweb_celery gramps-mcp
+# Set GRAMPS_API_URL=http://grampsweb:5000, GRAMPS_USERNAME=owner, GRAMPS_PASSWORD=owner,
+# GRAMPS_ALLOW_WRITES=true in .env.dev (gitignored). Browse the tree directly at
+# http://localhost:8090.
 #
-# (GRAMPSWEB_SECRET_KEY is normally exported by the container's own entrypoint script, which
-# `exec` bypasses — the secret itself is generated on first boot at /app/secret/secret.)
-#
-# Then set GRAMPS_API_URL=http://grampsweb:5000, GRAMPS_USERNAME=owner,
-# GRAMPS_PASSWORD=owner, GRAMPS_ALLOW_WRITES=true in .env.dev (gitignored). Browse the tree
-# directly at http://localhost:8090.
+# `docker compose -f docker-compose.dev.yml up` is enough on its own — startup is staged
+# automatically via `grampsweb_init`: it waits for grampsweb's HTTP server, then creates the
+# owner account. That command is also what triggers the tree's initial SQLite schema creation;
+# running it here, alone, before celery or gramps-mcp exist, is what avoids a race where both
+# grampsweb and grampsweb_celery try to create that schema concurrently on a cold start and
+# corrupt it ("sqlite3.OperationalError: table person already exists"). grampsweb_celery and
+# gramps-mcp wait for grampsweb_init to report healthy before starting.
 
 services:
   gramps-mcp:
@@ -28,7 +21,8 @@ services:
     env_file:
       - .env.dev
     depends_on:
-      - grampsweb
+      grampsweb_init:
+        condition: service_healthy
 
   grampsweb: &grampsweb
     image: ghcr.io/gramps-project/grampsweb:latest
@@ -52,12 +46,51 @@ services:
       - gramps_media:/app/media
       - gramps_tmp:/tmp
 
+  # Waits for grampsweb to accept connections, then creates the owner account. Safe to re-run on
+  # restarts: "user already exists" is swallowed. Stays running (sleep infinity) rather than
+  # exiting, and reports readiness via a healthcheck on a sentinel file instead of exit code —
+  # keeps it a normal healthy service instead of showing as "exited"/failed in tools like
+  # Portainer that don't distinguish an intentional one-shot exit from a crash. The sentinel
+  # lives on this container's own ephemeral filesystem (/run), not a shared volume — if it
+  # persisted across restarts, a later redeploy that pulls a grampsweb image with *new*
+  # migrations could report healthy instantly from a stale sentinel and release grampsweb_celery
+  # before grampsweb finishes applying those new migrations, reintroducing the exact race this
+  # is meant to prevent. Keeping it ephemeral forces a fresh wait+bootstrap on every container
+  # start, which is cheap (a few seconds) when there's nothing new to do.
+  grampsweb_init:
+    <<: *grampsweb
+    restart: unless-stopped
+    ports: []
+    depends_on:
+      - grampsweb
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        # / serves the frontend and needs no auth, unlike /api/metadata/ (401 without a token) —
+        # just need confirmation the HTTP server is up; alembic migrations already ran by then.
+        until python3 -c "import urllib.request; urllib.request.urlopen('http://grampsweb:5000/')" 2>/dev/null; do
+          sleep 1
+        done
+        export GRAMPSWEB_SECRET_KEY=$(cat /app/secret/secret)
+        cd /app/src
+        python3 -m gramps_webapi --config /app/config/config.cfg user add \
+          --fullname Owner --role 4 owner owner || true
+        touch /run/init-done
+        sleep infinity
+    healthcheck:
+      test: ["CMD", "test", "-f", "/run/init-done"]
+      interval: 5s
+      timeout: 3s
+      start_period: 5s
+      retries: 60
+
   grampsweb_celery:
     <<: *grampsweb
     ports: []
     depends_on:
-      - grampsweb
-      - grampsweb_redis
+      grampsweb_init:
+        condition: service_healthy
     command: celery -A gramps_webapi.celery worker --loglevel=INFO --concurrency=2
 
   grampsweb_redis:
