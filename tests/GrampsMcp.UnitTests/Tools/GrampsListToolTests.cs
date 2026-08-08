@@ -1,7 +1,5 @@
 using System.Net;
 using System.Text;
-using GrampsMcp.Server.Configuration;
-using GrampsMcp.Server.Gramps;
 using GrampsMcp.Server.Tools;
 using GrampsMcp.UnitTests.Gramps;
 using ModelContextProtocol;
@@ -10,14 +8,6 @@ namespace GrampsMcp.UnitTests.Tools;
 
 public class GrampsListToolTests
 {
-    private static readonly GrampsOptions Options = new()
-    {
-        ApiUrl = "https://tree.example.com",
-        Username = "owner",
-        Password = "owner",
-        MaxPageSize = 50,
-    };
-
     [Fact]
     public async Task ListAsync_ResolvesTypeAndPassesThroughSortAndKeys()
     {
@@ -25,7 +15,7 @@ public class GrampsListToolTests
         {
             Content = new StringContent("""[{"handle":"h1"}]""", Encoding.UTF8, "application/json"),
         });
-        var tool = new GrampsListTool(CreateClient(handler));
+        var tool = new GrampsListTool(GrampsTestClientFactory.CreateClient(handler));
 
         await tool.ListAsync("family", sort: "-change", page: 2, pagesize: 10, keys: ["gramps_id", "handle"]);
 
@@ -41,14 +31,8 @@ public class GrampsListToolTests
     public async Task ListAsync_OnUnknownType_ThrowsBeforeMakingAnyRequest()
     {
         var handler = new TestHttpMessageHandler(_ => throw new InvalidOperationException("should not be called"));
-        var tool = new GrampsListTool(CreateClient(handler));
+        var tool = new GrampsListTool(GrampsTestClientFactory.CreateClient(handler));
 
         await Assert.ThrowsAsync<McpException>(() => tool.ListAsync("families"));
-    }
-
-    private static GrampsApiClient CreateClient(HttpMessageHandler handler)
-    {
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri(Options.ApiUrl) };
-        return new GrampsApiClient(httpClient, Microsoft.Extensions.Options.Options.Create(Options));
     }
 }

@@ -1,7 +1,5 @@
 using System.Net;
 using System.Text;
-using GrampsMcp.Server.Configuration;
-using GrampsMcp.Server.Gramps;
 using GrampsMcp.Server.Tools;
 using GrampsMcp.UnitTests.Gramps;
 using ModelContextProtocol;
@@ -10,14 +8,6 @@ namespace GrampsMcp.UnitTests.Tools;
 
 public class GrampsRelationToolTests
 {
-    private static readonly GrampsOptions Options = new()
-    {
-        ApiUrl = "https://tree.example.com",
-        Username = "owner",
-        Password = "owner",
-        MaxPageSize = 50,
-    };
-
     [Fact]
     public async Task RelationAsync_WithHandles_HitsRelationsEndpoint()
     {
@@ -28,7 +18,7 @@ public class GrampsRelationToolTests
                 Encoding.UTF8,
                 "application/json"),
         });
-        var tool = new GrampsRelationTool(CreateClient(handler));
+        var tool = new GrampsRelationTool(GrampsTestClientFactory.CreateClient(handler));
 
         var result = await tool.RelationAsync("handle-a", "handle-b", cancellationToken: CancellationToken.None);
 
@@ -44,7 +34,7 @@ public class GrampsRelationToolTests
         {
             Content = new StringContent("{}", Encoding.UTF8, "application/json"),
         });
-        var tool = new GrampsRelationTool(CreateClient(handler));
+        var tool = new GrampsRelationTool(GrampsTestClientFactory.CreateClient(handler));
 
         await tool.RelationAsync("handle-a", "handle-b", depth: 5, locale: "de", cancellationToken: CancellationToken.None);
 
@@ -72,7 +62,7 @@ public class GrampsRelationToolTests
                 Content = new StringContent("{}", Encoding.UTF8, "application/json"),
             };
         });
-        var tool = new GrampsRelationTool(CreateClient(handler));
+        var tool = new GrampsRelationTool(GrampsTestClientFactory.CreateClient(handler));
 
         await tool.RelationAsync("I0001", "I0002", cancellationToken: CancellationToken.None);
 
@@ -87,7 +77,7 @@ public class GrampsRelationToolTests
         {
             Content = new StringContent("[]", Encoding.UTF8, "application/json"),
         });
-        var tool = new GrampsRelationTool(CreateClient(handler));
+        var tool = new GrampsRelationTool(GrampsTestClientFactory.CreateClient(handler));
 
         var exception = await Assert.ThrowsAsync<McpException>(
             () => tool.RelationAsync("I9999999", "I0002", cancellationToken: CancellationToken.None));
@@ -100,15 +90,9 @@ public class GrampsRelationToolTests
     public async Task RelationAsync_WithInvalidHandle_ThrowsBeforeMakingAnyRequest()
     {
         var handler = new TestHttpMessageHandler(_ => throw new InvalidOperationException("should not be called"));
-        var tool = new GrampsRelationTool(CreateClient(handler));
+        var tool = new GrampsRelationTool(GrampsTestClientFactory.CreateClient(handler));
 
         await Assert.ThrowsAsync<McpException>(
             () => tool.RelationAsync("../../etc", "handle-b", cancellationToken: CancellationToken.None));
-    }
-
-    private static GrampsApiClient CreateClient(HttpMessageHandler handler)
-    {
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri(Options.ApiUrl) };
-        return new GrampsApiClient(httpClient, Microsoft.Extensions.Options.Options.Create(Options));
     }
 }
