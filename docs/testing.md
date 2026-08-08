@@ -71,9 +71,24 @@ previous run) for these runs, so they exclude image-pull time — see the note b
 | **Total: cold `up --wait` → fully seeded and healthy** | **~46-51s** | Measured twice on `docker-compose.test.yml` (46.6s, 51.1s) and once seeded on `docker-compose.dev.yml` (46.1s) via a port-remapped override. The un-seeded `docker-compose.dev.yml` path (no import) came up in ~17s. |
 
 This sets the timeout budget for a later CI live-test workflow: the import script's own
-`OVERALL_TIMEOUT_S` is 900s and the healthcheck allows up to `5s x 240 = 1200s` — both far more
-generous than the ~50s observed, so a CI step timeout of 5 minutes for `up --wait` has comfortable
-headroom without masking a genuine regression.
+`OVERALL_TIMEOUT_S` is 180s and the healthcheck allows up to `5s x 60 = 300s` — both comfortably
+above the ~50s observed (>3x margin) while still failing fast if something is genuinely stuck,
+rather than the 900s/1200s this was originally set to (an estimate that turned out to be an order
+of magnitude too pessimistic once the real import was measured). A CI step timeout of 5 minutes
+for `up --wait` has headroom without masking a genuine regression.
+
+**Duplicate-import marker.** The seeding script writes a persistent marker
+(`/app/cache/.example_seed_queued`) *before* POSTing the import, so a `grampsweb_init` restart
+between "queued" and "finished" waits for the already-queued import instead of re-queuing a
+duplicate. If the file read or the POST itself fails after the marker is written, the marker is
+removed before the exception propagates — otherwise a transient failure (a moved bundled file, a
+401/502 from the import endpoint, a kill mid-write) would leave the marker stuck, and every future
+start would wait out the full `OVERALL_TIMEOUT_S` for an import that was never actually queued.
+This was verified directly: a forced failure between the marker write and the POST left the marker
+removed and the tree still empty, and the very next normal start queued and completed a real
+import rather than waiting on a phantom one. Separately, a `grampsweb_init` restart genuinely
+mid-import (marker present, `people == 0`) was confirmed to wait rather than re-queue, landing on
+the same 2157-person fingerprint with no duplication.
 
 **Image pull time** was not measured — `ghcr.io/gramps-project/grampsweb:latest` was already
 cached locally in this session. For reference, the image is ~6.7GB uncompressed (it bundles

@@ -147,7 +147,12 @@ services:
         # plateau can't pass - before calling the import done.
         STABILITY_WINDOW_S = 20
         POLL_INTERVAL_S = 3
-        OVERALL_TIMEOUT_S = 900
+        # Measured cold import of the full example.gramps dataset (2157 people, 10536 objects)
+        # completes in ~10-16s, for a total wait (including the stability window above) of
+        # ~35-51s end to end - see docs/testing.md. 180s leaves >3x that margin while still
+        # failing fast if something is genuinely stuck, instead of the 900s this was originally
+        # set to (an estimate that turned out to be an order of magnitude too pessimistic).
+        OVERALL_TIMEOUT_S = 180
         PEOPLE_FLOOR = 2000
 
         def api(method, path, token=None, data=None, content_type=None):
@@ -213,20 +218,30 @@ services:
         if people > 0:
             print(f"Tree already has {people} people - skipping example dataset import.")
         elif os.path.exists(QUEUED_MARKER):
-            print("Example dataset import already queued by a previous run - waiting for it to finish.")
+            print(f"Example dataset import already queued by a previous run (marker: {QUEUED_MARKER}) - waiting for it to finish.")
             wait_for_import(token)
         else:
+            # Marker must be written before the POST (that ordering is what lets a restart
+            # between "queued" and "finished" wait instead of re-queuing - see docker-compose.dev
+            # .yml's comment on this), but if the file read or the POST itself then fails, the
+            # marker must not survive: even here, where the volume is anonymous and doesn't
+            # outlive a `down`, a stuck marker would still poison every restart within the same
+            # `up` session into waiting ~180s for an import that was never actually queued.
             with open(QUEUED_MARKER, "w") as f:
                 f.write("queued")
-            with open("/venv/share/doc/gramps/example/gramps/example.gramps", "rb") as f:
-                payload = f.read()
-            api(
-                "POST",
-                "/api/importers/gramps/file",
-                token=token,
-                data=payload,
-                content_type="application/octet-stream",
-            )
+            try:
+                with open("/venv/share/doc/gramps/example/gramps/example.gramps", "rb") as f:
+                    payload = f.read()
+                api(
+                    "POST",
+                    "/api/importers/gramps/file",
+                    token=token,
+                    data=payload,
+                    content_type="application/octet-stream",
+                )
+            except Exception:
+                os.remove(QUEUED_MARKER)
+                raise
             print("Queued import of bundled example.gramps dataset (async, via Celery) - waiting for it to finish.")
             wait_for_import(token)
         PYEOF
@@ -238,7 +253,7 @@ services:
       interval: 5s
       timeout: 3s
       start_period: 10s
-      retries: 240  # generous: covers HTTP boot + the full import (OVERALL_TIMEOUT_S above)
+      retries: 60  # 300s: HTTP boot (~10s) + OVERALL_TIMEOUT_S (180s) + margin
 
   grampsweb_celery:
     <<: *grampsweb
