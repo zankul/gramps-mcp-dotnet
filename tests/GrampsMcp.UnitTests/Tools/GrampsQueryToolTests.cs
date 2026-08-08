@@ -1,7 +1,5 @@
 using System.Net;
 using System.Text;
-using GrampsMcp.Server.Configuration;
-using GrampsMcp.Server.Gramps;
 using GrampsMcp.Server.Tools;
 using GrampsMcp.UnitTests.Gramps;
 using ModelContextProtocol;
@@ -10,14 +8,6 @@ namespace GrampsMcp.UnitTests.Tools;
 
 public class GrampsQueryToolTests
 {
-    private static readonly GrampsOptions Options = new()
-    {
-        ApiUrl = "https://tree.example.com",
-        Username = "owner",
-        Password = "owner",
-        MaxPageSize = 50,
-    };
-
     [Fact]
     public async Task QueryAsync_ResolvesTypeAndPassesThroughGqlPageAndKeys()
     {
@@ -25,7 +15,7 @@ public class GrampsQueryToolTests
         {
             Content = new StringContent("""[{"handle":"h1"}]""", Encoding.UTF8, "application/json"),
         });
-        var tool = new GrampsQueryTool(CreateClient(handler));
+        var tool = new GrampsQueryTool(GrampsTestClientFactory.CreateClient(handler));
 
         await tool.QueryAsync(
             "person", "child_ref_list.length >= 3", page: 2, pagesize: 10, keys: ["gramps_id", "handle"]);
@@ -42,7 +32,7 @@ public class GrampsQueryToolTests
     public async Task QueryAsync_OnUnknownType_ThrowsBeforeMakingAnyRequest()
     {
         var handler = new TestHttpMessageHandler(_ => throw new InvalidOperationException("should not be called"));
-        var tool = new GrampsQueryTool(CreateClient(handler));
+        var tool = new GrampsQueryTool(GrampsTestClientFactory.CreateClient(handler));
 
         await Assert.ThrowsAsync<McpException>(() => tool.QueryAsync("people", "surname = X"));
     }
@@ -55,16 +45,10 @@ public class GrampsQueryToolTests
         {
             Content = new StringContent($$"""{"error":"{{upstreamError}}"}""", Encoding.UTF8, "application/json"),
         });
-        var tool = new GrampsQueryTool(CreateClient(handler));
+        var tool = new GrampsQueryTool(GrampsTestClientFactory.CreateClient(handler));
 
         var exception = await Assert.ThrowsAsync<McpException>(() => tool.QueryAsync("person", "surname ~ X"));
 
         Assert.Equal(upstreamError, exception.Message);
-    }
-
-    private static GrampsApiClient CreateClient(HttpMessageHandler handler)
-    {
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri(Options.ApiUrl) };
-        return new GrampsApiClient(httpClient, Microsoft.Extensions.Options.Options.Create(Options));
     }
 }
