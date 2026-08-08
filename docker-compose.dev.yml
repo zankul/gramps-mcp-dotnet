@@ -85,8 +85,16 @@ services:
           --fullname Owner --role 4 owner owner || true
 
         if [ "$GRAMPS_SEED_EXAMPLE_DATA" = "true" ]; then
-          python3 <<'PYEOF'
+          # Best-effort: a transient failure here (or the import not finishing before a
+          # restart) must not block /run/init-done, since seeding is opt-in and the tree
+          # is otherwise perfectly usable empty. The import itself runs async via Celery,
+          # so this polls object_counts.people to completion before returning, rather than
+          # just confirming the import was queued - otherwise a grampsweb_init restart
+          # between "queued" and "Celery finished" would see people still at 0 and queue a
+          # second, duplicate import.
+          python3 <<'PYEOF' || echo "Example dataset seeding failed - continuing without it."
         import json
+        import time
         import urllib.request
 
         def api(method, path, token=None, data=None, content_type=None):
@@ -102,6 +110,9 @@ services:
                 body = resp.read()
                 return json.loads(body) if body else None
 
+        def people_count(token):
+            return api("GET", "/api/metadata/", token=token)["object_counts"]["people"]
+
         token = api(
             "POST",
             "/api/token/",
@@ -109,7 +120,7 @@ services:
             content_type="application/json",
         )["access_token"]
 
-        people = api("GET", "/api/metadata/", token=token)["object_counts"]["people"]
+        people = people_count(token)
         if people == 0:
             with open("/venv/share/doc/gramps/example/gramps/example.gramps", "rb") as f:
                 payload = f.read()
@@ -120,7 +131,14 @@ services:
                 data=payload,
                 content_type="application/octet-stream",
             )
-            print("Queued import of bundled example.gramps dataset (async, via Celery).")
+            print("Queued import of bundled example.gramps dataset (async, via Celery) - waiting for it to finish.")
+            for _ in range(120):
+                if people_count(token) > 0:
+                    print("Example dataset import complete.")
+                    break
+                time.sleep(1)
+            else:
+                print("Timed out waiting for example dataset import to finish.")
         else:
             print(f"Tree already has {people} people - skipping example dataset import.")
         PYEOF
