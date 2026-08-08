@@ -85,17 +85,23 @@ services:
           --fullname Owner --role 4 owner owner || true
 
         if [ "$GRAMPS_SEED_EXAMPLE_DATA" = "true" ]; then
-          # Best-effort: a transient failure here (or the import not finishing before a
-          # restart) must not block /run/init-done, since seeding is opt-in and the tree
-          # is otherwise perfectly usable empty. The import itself runs async via Celery,
-          # so this polls object_counts.people to completion before returning, rather than
-          # just confirming the import was queued - otherwise a grampsweb_init restart
-          # between "queued" and "Celery finished" would see people still at 0 and queue a
-          # second, duplicate import.
+          # Best-effort: a transient failure here must not block /run/init-done, since
+          # seeding is opt-in and the tree is otherwise perfectly usable empty. The import
+          # itself runs async via Celery, so object_counts.people alone can't tell "not
+          # started" apart from "queued, not finished yet" - polling that count on its own
+          # would let a grampsweb_init restart mid-import see people == 0 and queue a
+          # second, duplicate import. QUEUED_MARKER lives on the gramps_cache volume (unlike
+          # the /run/init-done sentinel, which is intentionally ephemeral - see the comment
+          # above) specifically so it survives a restart: it's written *before* the POST
+          # that queues the import, so a restart that finds it just waits for the
+          # already-queued import to finish instead of re-queuing one.
           python3 <<'PYEOF' || echo "Example dataset seeding failed - continuing without it."
         import json
+        import os
         import time
         import urllib.request
+
+        QUEUED_MARKER = "/app/cache/.example_seed_queued"
 
         def api(method, path, token=None, data=None, content_type=None):
             headers = {}
@@ -113,6 +119,14 @@ services:
         def people_count(token):
             return api("GET", "/api/metadata/", token=token)["object_counts"]["people"]
 
+        def wait_for_import(token):
+            for _ in range(120):
+                if people_count(token) > 0:
+                    print("Example dataset import complete.")
+                    return
+                time.sleep(1)
+            print("Timed out waiting for example dataset import to finish.")
+
         token = api(
             "POST",
             "/api/token/",
@@ -121,7 +135,14 @@ services:
         )["access_token"]
 
         people = people_count(token)
-        if people == 0:
+        if people > 0:
+            print(f"Tree already has {people} people - skipping example dataset import.")
+        elif os.path.exists(QUEUED_MARKER):
+            print("Example dataset import already queued by a previous run - waiting for it to finish.")
+            wait_for_import(token)
+        else:
+            with open(QUEUED_MARKER, "w") as f:
+                f.write("queued")
             with open("/venv/share/doc/gramps/example/gramps/example.gramps", "rb") as f:
                 payload = f.read()
             api(
@@ -132,15 +153,7 @@ services:
                 content_type="application/octet-stream",
             )
             print("Queued import of bundled example.gramps dataset (async, via Celery) - waiting for it to finish.")
-            for _ in range(120):
-                if people_count(token) > 0:
-                    print("Example dataset import complete.")
-                    break
-                time.sleep(1)
-            else:
-                print("Timed out waiting for example dataset import to finish.")
-        else:
-            print(f"Tree already has {people} people - skipping example dataset import.")
+            wait_for_import(token)
         PYEOF
         fi
 
