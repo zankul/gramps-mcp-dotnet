@@ -5,19 +5,59 @@
 # GRAMPS_ALLOW_WRITES=true in .env.dev (gitignored). Browse the tree directly at
 # http://localhost:8090.
 #
-# `docker compose -f docker-compose.dev.yml up` is enough on its own — startup is staged
-# automatically via `grampsweb_init`: it waits for grampsweb's HTTP server, then creates the
-# owner account. That command is also what triggers the tree's initial SQLite schema creation;
-# running it here, alone, before celery or gramps-mcp exist, is what avoids a race where both
+# `docker compose -f docker-compose.dev.yml up` is enough on its own — startup is staged across
+# three services:
+#
+#   grampsweb_bootstrap -> grampsweb_celery -> grampsweb_init -> gramps-mcp
+#
+# grampsweb_bootstrap waits for grampsweb's HTTP server, then creates the owner account, then
+# exits 0. That's also what triggers the tree's initial SQLite schema creation; running it here,
+# alone, single-threaded, before celery or gramps-mcp exist, is what avoids a race where both
 # grampsweb and grampsweb_celery try to create that schema concurrently on a cold start and
-# corrupt it ("sqlite3.OperationalError: table person already exists"). grampsweb_celery and
-# gramps-mcp wait for grampsweb_init to report healthy before starting.
+# corrupt it ("sqlite3.OperationalError: table person already exists"). grampsweb_celery waits for
+# grampsweb_bootstrap to *complete successfully* (not merely start) before it starts, so the
+# worker never touches the tree until the schema exists.
+#
+# grampsweb_init depends on grampsweb_celery and only handles the optional example-dataset seed
+# (see below) before reporting healthy — it is deliberately *not* what gates schema creation, so
+# it no longer needs to be on the critical path for the plain (unseeded) case. gramps-mcp is the
+# only service that waits on grampsweb_init.
+#
+# Why the split: an earlier version had a single grampsweb_init doing bootstrap *and* seeding,
+# with grampsweb_celery gated on grampsweb_init being healthy. That meant the worker that
+# performs the example-dataset import couldn't start until init was healthy — but init's own
+# healthcheck was waiting on the import finishing. On a cold seeded start that's a deadlock init
+# could only escape by timing out (burning its full poll budget and printing "Timed out waiting
+# for example dataset import to finish" on every run, without the import ever having a chance to
+# progress). Splitting bootstrap out breaks that cycle: celery is released as soon as the schema
+# exists, well before grampsweb_init ever queues an import.
+#
+# Trade-off: grampsweb_bootstrap is a genuine one-shot (`restart: "no"`) and shows as "exited" in
+# tools like Portainer that don't distinguish an intentional one-shot exit from a crash — the
+# previous design kept init alive with `sleep infinity` specifically to avoid that. We accept the
+# cosmetic "exited" status in exchange for actually removing the deadlock; don't reintroduce the
+# coupling between celery's startup and init's healthcheck to chase the cosmetic fix back away.
+#
+# grampsweb_init's sentinel (/run/init-done) lives on its own container's ephemeral filesystem,
+# not a shared volume — if it persisted across restarts, a later redeploy that pulls a grampsweb
+# image with *new* migrations could report healthy instantly from a stale sentinel and release
+# gramps-mcp before grampsweb finishes applying those new migrations, reintroducing the exact kind
+# of race grampsweb_bootstrap exists to prevent. Keeping it ephemeral forces a fresh wait on every
+# container start, which is cheap (a few seconds, or a few minutes for a fresh seeded import) when
+# there's nothing new to do.
 #
 # Set GRAMPS_SEED_EXAMPLE_DATA=true to have grampsweb_init also import the example.gramps
 # dataset that ships inside the grampsweb image itself (2000+ people, families, events —
 # useful for exercising gramps_search/gramps_relation/gramps_timeline against something
 # realistic instead of an empty tree). Only happens once per empty tree: grampsweb_init checks
 # the object counts first and skips the import if the tree already has people in it.
+#
+# Gotcha: `$VARIABLE` inside a compose `command:` block is interpolated by Docker Compose at
+# *parse* time, from the host's environment — not by the container's shell at run time. The one
+# use of that form below (`$GRAMPS_SEED_EXAMPLE_DATA` in grampsweb_init's `if`) relies on it being
+# sourced the same way as the `environment:` block's `${GRAMPS_SEED_EXAMPLE_DATA:-false}` (host
+# shell / top-level `.env`, not `.env.dev`) so both resolve to the same value. Anything meant to
+# be evaluated by /bin/sh or python *inside* the container instead must be escaped as `$$`.
 
 services:
   gramps-mcp:
@@ -53,20 +93,16 @@ services:
       - gramps_media:/app/media
       - gramps_tmp:/tmp
 
-  # Waits for grampsweb to accept connections, then creates the owner account. Safe to re-run on
-  # restarts: "user already exists" is swallowed. Stays running (sleep infinity) rather than
-  # exiting, and reports readiness via a healthcheck on a sentinel file instead of exit code —
-  # keeps it a normal healthy service instead of showing as "exited"/failed in tools like
-  # Portainer that don't distinguish an intentional one-shot exit from a crash. The sentinel
-  # lives on this container's own ephemeral filesystem (/run), not a shared volume — if it
-  # persisted across restarts, a later redeploy that pulls a grampsweb image with *new*
-  # migrations could report healthy instantly from a stale sentinel and release grampsweb_celery
-  # before grampsweb finishes applying those new migrations, reintroducing the exact race this
-  # is meant to prevent. Keeping it ephemeral forces a fresh wait+bootstrap on every container
-  # start, which is cheap (a few seconds) when there's nothing new to do.
-  grampsweb_init:
+  # One-shot: waits for grampsweb to accept connections, then creates the owner account (safe to
+  # re-run: "user already exists" is swallowed), then exits 0. This is what performs the tree's
+  # initial SQLite schema creation, single-threaded, before any other service that touches the
+  # database exists — see the top-of-file comment for the concurrent-migration race this avoids.
+  # `restart: "no"` and no healthcheck: grampsweb_celery gates on this *completing successfully*,
+  # not on a sentinel, so there's nothing to keep alive for. Shows as "exited" in tools like
+  # Portainer — see top-of-file comment for why that's an accepted trade-off here.
+  grampsweb_bootstrap:
     <<: *grampsweb
-    restart: unless-stopped
+    restart: "no"
     ports: []
     depends_on:
       - grampsweb
@@ -84,6 +120,22 @@ services:
         python3 -m gramps_webapi --config /app/config/config.cfg user add \
           --fullname Owner --role 4 owner owner || true
 
+  # Waits for the schema-creating grampsweb_bootstrap to finish, then does the optional
+  # example-dataset seed, then reports healthy via a sentinel file. Stays running (sleep infinity)
+  # rather than exiting for the same "exited" vs. "healthy" reason as the old single-service init
+  # had — see top-of-file comment. By the time this runs, grampsweb_celery has already started
+  # (grampsweb is up, the owner account and schema already exist), so the import this queues can
+  # actually be picked up and processed instead of piling up behind a service that can't start yet.
+  grampsweb_init:
+    <<: *grampsweb
+    restart: unless-stopped
+    ports: []
+    depends_on:
+      - grampsweb_celery
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
         if [ "$GRAMPS_SEED_EXAMPLE_DATA" = "true" ]; then
           # Best-effort: a transient failure here must not block /run/init-done, since
           # seeding is opt-in and the tree is otherwise perfectly usable empty. The import
@@ -102,6 +154,17 @@ services:
         import urllib.request
 
         QUEUED_MARKER = "/app/cache/.example_seed_queued"
+        # The Gramps XML import commits different object classes (people, families, notes,
+        # citations, ...) at different points in the transaction, so `people` alone can plateau
+        # early while other classes are still landing - and checking `people > 0` on its own trips
+        # on the very first record committed, near the *start* of a 2000+ person import. Sum every
+        # object_counts value instead for a monotone progress signal, and require the total to
+        # hold steady for a stability window - with people past a floor, so an early near-empty
+        # plateau can't pass - before calling the import done.
+        STABILITY_WINDOW_S = 20
+        POLL_INTERVAL_S = 3
+        OVERALL_TIMEOUT_S = 900
+        PEOPLE_FLOOR = 2000
 
         def api(method, path, token=None, data=None, content_type=None):
             headers = {}
@@ -116,25 +179,53 @@ services:
                 body = resp.read()
                 return json.loads(body) if body else None
 
-        def people_count(token):
-            return api("GET", "/api/metadata/", token=token)["object_counts"]["people"]
+        def get_token():
+            return api(
+                "POST",
+                "/api/token/",
+                data=json.dumps({"username": "owner", "password": "owner"}).encode(),
+                content_type="application/json",
+            )["access_token"]
+
+        def object_counts(token):
+            return api("GET", "/api/metadata/", token=token)["object_counts"]
 
         def wait_for_import(token):
-            for _ in range(120):
-                if people_count(token) > 0:
-                    print("Example dataset import complete.")
+            start = time.monotonic()
+            last_total = None
+            last_change = start
+            seen_people = []
+            while True:
+                if time.monotonic() - start > OVERALL_TIMEOUT_S:
+                    print("Timed out waiting for example dataset import to become quiescent.")
+                    print("people progression:", " -> ".join(str(p) for p in seen_people))
                     return
-                time.sleep(1)
-            print("Timed out waiting for example dataset import to finish.")
+                try:
+                    counts = object_counts(token)
+                except Exception:
+                    # Access token may have expired mid-poll on a slow import; re-auth and retry.
+                    token = get_token()
+                    counts = object_counts(token)
+                total = sum(counts.values())
+                people = counts.get("people", 0)
+                if not seen_people or seen_people[-1] != people:
+                    seen_people.append(people)
+                    print(f"people: {' -> '.join(str(p) for p in seen_people)} (total objects: {total})")
+                if total == last_total:
+                    stable_for = time.monotonic() - last_change
+                    if stable_for >= STABILITY_WINDOW_S and people >= PEOPLE_FLOOR:
+                        print(
+                            f"Example dataset import complete: {people} people, {total} total "
+                            f"objects, stable for {stable_for:.0f}s."
+                        )
+                        return
+                else:
+                    last_total = total
+                    last_change = time.monotonic()
+                time.sleep(POLL_INTERVAL_S)
 
-        token = api(
-            "POST",
-            "/api/token/",
-            data=json.dumps({"username": "owner", "password": "owner"}).encode(),
-            content_type="application/json",
-        )["access_token"]
-
-        people = people_count(token)
+        token = get_token()
+        people = object_counts(token).get("people", 0)
         if people > 0:
             print(f"Tree already has {people} people - skipping example dataset import.")
         elif os.path.exists(QUEUED_MARKER):
@@ -164,14 +255,14 @@ services:
       interval: 5s
       timeout: 3s
       start_period: 5s
-      retries: 60
+      retries: 240  # generous: covers HTTP boot + a full example-dataset import when seeding is on
 
   grampsweb_celery:
     <<: *grampsweb
     ports: []
     depends_on:
-      grampsweb_init:
-        condition: service_healthy
+      grampsweb_bootstrap:
+        condition: service_completed_successfully
     command: celery -A gramps_webapi.celery worker --loglevel=INFO --concurrency=2
 
   grampsweb_redis:

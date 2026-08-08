@@ -79,6 +79,9 @@ dataset bundled inside the `grampsweb` image (2000+ people, families, and events
 starting from an empty tree — useful for exercising `gramps_search`/`gramps_relation`/
 `gramps_timeline` against something realistic.
 
+A separate, always-seeded, disposable stack (`docker-compose.test.yml`) backs the automated live
+test tier — see [docs/testing.md](docs/testing.md).
+
 A pre-built multi-arch image (`linux/amd64`, `linux/arm64`) is published to GHCR on every push to
 `main` and on version tags. It's currently private, so pulling it requires a GitHub PAT with
 `read:packages` scope:
