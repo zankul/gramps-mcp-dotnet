@@ -81,6 +81,10 @@ services:
       GRAMPSWEB_CELERY_CONFIG__result_backend: "redis://grampsweb_redis:6379/0"
       GRAMPSWEB_RATELIMIT_STORAGE_URI: redis://grampsweb_redis:6379/1
       GRAMPS_SEED_EXAMPLE_DATA: ${GRAMPS_SEED_EXAMPLE_DATA:-false}
+      # How many people the bundled example.gramps import must reach before grampsweb_init calls
+      # it done - see that service's script. Override if a future grampsweb image ships a
+      # differently-sized dataset.
+      GRAMPS_SEED_PEOPLE_FLOOR: ${GRAMPS_SEED_PEOPLE_FLOOR:-2000}
     depends_on:
       - grampsweb_redis
     volumes:
@@ -171,7 +175,15 @@ services:
         # which - combined with the QUEUED_MARKER poisoning bug fixed below - could previously
         # cost 15 minutes on every single start once the marker was stuck).
         OVERALL_TIMEOUT_S = 180
-        PEOPLE_FLOOR = 2000
+        # grampsweb:latest is unpinned, so a future image could ship a smaller example.gramps.
+        # The floor stays a genuine completion gate rather than a soft warning - quiescence alone
+        # can't tell "finished" from "a worker died mid-import and the count will never move
+        # again", which is exactly the failure mode the floor exists to catch (see requirement in
+        # the code review this fixed: a partially-seeded tree must never be reported as done).
+        # What was wrong before was hard-coding today's dataset size with no escape hatch; make
+        # it overridable via GRAMPS_SEED_PEOPLE_FLOOR instead, so a future dataset resize needs an
+        # environment variable change, not a code change.
+        PEOPLE_FLOOR = int(os.environ.get("GRAMPS_SEED_PEOPLE_FLOOR", "2000"))
 
         def api(method, path, token=None, data=None, content_type=None):
             headers = {}
@@ -194,25 +206,61 @@ services:
                 content_type="application/json",
             )["access_token"]
 
+        def get_token_with_retry(timeout_s=120, poll_s=1):
+            # Docker's restart policies don't honour depends_on: after a host reboot or Docker
+            # daemon restart, this container (restart: unless-stopped) can come up concurrently
+            # with grampsweb, which lost the ordering grampsweb_bootstrap gave it during the
+            # original `up`. Retrying here instead of failing on the first connection-refused
+            # means a concurrent restart waits for grampsweb instead of swallowing the error and
+            # reporting healthy on a tree that was never seeded.
+            start = time.monotonic()
+            last_exc = None
+            while time.monotonic() - start <= timeout_s:
+                try:
+                    return get_token()
+                except Exception as exc:
+                    last_exc = exc
+                    time.sleep(poll_s)
+            raise RuntimeError(
+                f"Could not reach grampsweb / authenticate within {timeout_s}s"
+            ) from last_exc
+
         def object_counts(token):
             return api("GET", "/api/metadata/", token=token)["object_counts"]
 
         def wait_for_import(token):
+            # Blocks until quiescent past PEOPLE_FLOOR or OVERALL_TIMEOUT_S elapses. Returns
+            # (done, people). Tolerates transient polling errors (a 502/503 under import load, an
+            # expired token) by retrying next iteration instead of abandoning the wait on the
+            # first blip - a genuine outage still bottoms out via OVERALL_TIMEOUT_S, it just does
+            # so by giving up rather than crashing out early on a single flaky poll.
             start = time.monotonic()
             last_total = None
             last_change = start
             seen_people = []
+            people = 0
             while True:
                 if time.monotonic() - start > OVERALL_TIMEOUT_S:
                     print("Timed out waiting for example dataset import to become quiescent.")
                     print("people progression:", " -> ".join(str(p) for p in seen_people))
-                    return
+                    # Below the floor, the import is almost certainly dead (a live one would
+                    # still be moving) - remove the marker so the next start re-queues instead of
+                    # waiting out the full timeout again forever. At/above the floor but not yet
+                    # confirmed stable, leave the marker: that's very likely still a legitimate,
+                    # if slow, import, and re-queuing a second one on top of it would be worse.
+                    if people < PEOPLE_FLOOR and os.path.exists(QUEUED_MARKER):
+                        os.remove(QUEUED_MARKER)
+                    return False, people
                 try:
                     counts = object_counts(token)
-                except Exception:
-                    # Access token may have expired mid-poll on a slow import; re-auth and retry.
-                    token = get_token()
-                    counts = object_counts(token)
+                except Exception as exc:
+                    print(f"Transient error polling /api/metadata/ ({exc!r}) - retrying.")
+                    try:
+                        token = get_token()
+                    except Exception:
+                        pass
+                    time.sleep(POLL_INTERVAL_S)
+                    continue
                 total = sum(counts.values())
                 people = counts.get("people", 0)
                 if not seen_people or seen_people[-1] != people:
@@ -225,26 +273,34 @@ services:
                             f"Example dataset import complete: {people} people, {total} total "
                             f"objects, stable for {stable_for:.0f}s."
                         )
-                        return
+                        if os.path.exists(QUEUED_MARKER):
+                            os.remove(QUEUED_MARKER)
+                        return True, people
                 else:
                     last_total = total
                     last_change = time.monotonic()
                 time.sleep(POLL_INTERVAL_S)
 
-        token = get_token()
+        token = get_token_with_retry()
         people = object_counts(token).get("people", 0)
-        if people > 0:
-            print(f"Tree already has {people} people - skipping example dataset import.")
-        elif os.path.exists(QUEUED_MARKER):
-            print(f"Example dataset import already queued by a previous run (marker: {QUEUED_MARKER}) - waiting for it to finish.")
-            wait_for_import(token)
-        else:
+        marker_exists = os.path.exists(QUEUED_MARKER)
+
+        # Order matters: `people > 0` alone (the previous bug here) trips on the very first
+        # record committed, nowhere near done, and would report healthy on a half-imported tree.
+        # "Already seeded" is only safe to declare when there is no import in flight (no marker)
+        # *and* the count has genuinely reached the floor; anything else - a marker present, or a
+        # nonzero sub-floor count with no marker at all (shouldn't happen via our own code path,
+        # but if it does, still unresolved either way) - falls through to wait_for_import's
+        # proper quiescence check instead of being fast-tracked past it.
+        if not marker_exists and people >= PEOPLE_FLOOR:
+            print(f"Tree already has {people} people (no import in flight) - skipping example dataset import.")
+        elif not marker_exists and people == 0:
             # Marker must be written before the POST (that ordering is what lets a restart
-            # between "queued" and "finished" wait instead of re-queuing - see the comment
-            # above), but if the file read or the POST itself then fails, the marker must not
-            # survive: it lives on the persistent gramps_cache volume, so a stuck marker would
-            # otherwise poison every future start into waiting ~180s for an import that was
-            # never actually queued, with no way out short of manually deleting the volume.
+            # between "queued" and "finished" wait instead of re-queuing), but if the file read
+            # or the POST itself then fails, the marker must not survive: it lives on the
+            # persistent gramps_cache volume, so a stuck marker would otherwise poison every
+            # future start into waiting out OVERALL_TIMEOUT_S for an import that was never
+            # actually queued, with no way out short of manually deleting the volume.
             with open(QUEUED_MARKER, "w") as f:
                 f.write("queued")
             try:
@@ -262,6 +318,12 @@ services:
                 raise
             print("Queued import of bundled example.gramps dataset (async, via Celery) - waiting for it to finish.")
             wait_for_import(token)
+        else:
+            if marker_exists:
+                print(f"Example dataset import already queued by a previous run (marker: {QUEUED_MARKER}) - waiting for it to finish.")
+            else:
+                print(f"Tree has {people} people (below the {PEOPLE_FLOOR}-person floor, no import tracked) - confirming state before reporting healthy.")
+            wait_for_import(token)
         PYEOF
         fi
 
@@ -272,7 +334,9 @@ services:
       interval: 5s
       timeout: 3s
       start_period: 5s
-      retries: 60  # 300s: HTTP boot (~10s) + OVERALL_TIMEOUT_S (180s) + margin, when seeding is on
+      # 450s: get_token_with_retry's bound (120s, only paid on the reboot-race path - see the
+      # script) + OVERALL_TIMEOUT_S (180s) + margin, when seeding is on.
+      retries: 90
 
   grampsweb_celery:
     <<: *grampsweb

@@ -77,18 +77,67 @@ rather than the 900s/1200s this was originally set to (an estimate that turned o
 of magnitude too pessimistic once the real import was measured). A CI step timeout of 5 minutes
 for `up --wait` has headroom without masking a genuine regression.
 
-**Duplicate-import marker.** The seeding script writes a persistent marker
-(`/app/cache/.example_seed_queued`) *before* POSTing the import, so a `grampsweb_init` restart
-between "queued" and "finished" waits for the already-queued import instead of re-queuing a
-duplicate. If the file read or the POST itself fails after the marker is written, the marker is
-removed before the exception propagates — otherwise a transient failure (a moved bundled file, a
-401/502 from the import endpoint, a kill mid-write) would leave the marker stuck, and every future
-start would wait out the full `OVERALL_TIMEOUT_S` for an import that was never actually queued.
-This was verified directly: a forced failure between the marker write and the POST left the marker
-removed and the tree still empty, and the very next normal start queued and completed a real
-import rather than waiting on a phantom one. Separately, a `grampsweb_init` restart genuinely
-mid-import (marker present, `people == 0`) was confirmed to wait rather than re-queue, landing on
-the same 2157-person fingerprint with no duplication.
+**Seeding state machine.** `grampsweb_init`'s script (identical in both compose files apart from
+the dev file's opt-in `if` gate and best-effort `|| echo` swallow) decides what to do from two
+signals: the current `people` count and whether `QUEUED_MARKER`
+(`/app/cache/.example_seed_queued`) exists. The order is deliberate and was the subject of a
+review round that caught a real bug: checking `people > 0` *before* the marker trips on the very
+first record committed — nowhere near done — and would report healthy on a half-imported tree. The
+fix gates "already seeded, skip" on **no marker and `people >= PEOPLE_FLOOR`** specifically;
+anything else (a marker present, or a nonzero sub-floor count with no marker at all) falls through
+to `wait_for_import`'s quiescence check instead of being fast-tracked past it. This was verified by
+restarting `grampsweb_init` mid-import (after the queue, before completion) and confirming it took
+the "already queued, waiting" branch rather than a false "skip" — it did not report healthy until
+the tree was genuinely complete, landing on the same 2157/10536 fingerprint with no duplication.
+
+One empirical note from that verification: this Gramps Web version's import appears to commit
+**atomically** from the API's perspective — polling `/api/metadata/` every 250ms during a live
+import showed `object_counts` sitting at all-zero and then jumping straight to the final
+2157-people/10536-object state in one step, never a gradual climb. A literal "500 of 2157
+committed" partial read could not be reproduced against the real import for that reason. The fix
+above doesn't depend on that being reproducible, though: it also covers (and was verified against)
+a queued-but-never-completed import (celery stopped right after the POST), which reliably produces
+a genuine stuck `people == 0` state.
+
+**Duplicate-import marker and its poisoning.** The marker is written *before* POSTing the import
+(closes the duplicate-import race: a restart between "queued" and "finished" waits instead of
+re-queuing) and is removed in three places: after a successful quiescent completion, after the
+file-read/POST itself fails, and after `wait_for_import` times out with `people` still below
+`PEOPLE_FLOOR` (a timeout at or above the floor leaves the marker, since that's very likely a
+live-but-slow import rather than a dead one, and re-queuing on top of it would be worse than
+waiting). All three paths were verified directly: a forced failure between the marker write and
+the POST left the marker removed and the tree still empty; stopping the celery worker right after
+queuing left `people` at 0 through a shortened timeout window and the marker was removed
+afterward; in both cases the very next normal start queued and completed a real import rather than
+waiting on a phantom one.
+
+**Reboot-race defense.** Docker's restart policies don't honour `depends_on` — after a host reboot
+or daemon restart, `grampsweb_init` (`restart: unless-stopped`) can start before `grampsweb` does,
+since the ordering `grampsweb_bootstrap` provided during the original `up` no longer applies.
+`get_token_with_retry` (bounded at 120s) replaces a bare `get_token()` call for exactly this case.
+Verified by creating (but not starting) `grampsweb` and starting `grampsweb_init` standalone: it
+sat in `starting` health state, retrying silently, for the whole gap, then completed a normal
+seeded run the moment `grampsweb`/`grampsweb_bootstrap` came up — at no point did it report
+healthy against the unseeded tree.
+
+**Test stack fails fast, not silently.** `docker-compose.test.yml`'s `grampsweb_init` uses
+`restart: "no"` (not `unless-stopped`, unlike every other service in that file): with
+`unless-stopped`, a failure exit just restarts the container and the healthcheck's failure counter
+resets on every restart, so it never reaches the unhealthy threshold — `up --wait` has no timeout
+of its own and would hang indefinitely instead of failing. Verified by forcing an immediate seeding
+failure (a broken import file path): the container exited once, stayed exited, and
+`docker compose up -d --wait` returned a real, prompt failure (`dependency failed to start:
+container ... exited (1)`, exit code 1) rather than hanging.
+
+**Configurable completion floor.** `PEOPLE_FLOOR` (default 2000, overridable via
+`GRAMPS_SEED_PEOPLE_FLOOR`) stays a hard gate on completion rather than a soft warning: quiescence
+alone can't distinguish "finished" from "a worker died mid-import and the count will never move
+again" (both look identical — a frozen, non-changing count), and the floor is what catches that.
+The trade-off is that `grampsweb:latest` is unpinned, so a future image shipping a smaller
+`example.gramps` would need `GRAMPS_SEED_PEOPLE_FLOOR` lowered via an environment variable — not a
+code change, but not fully automatic either. That's judged the better trade: a quiescence-only
+gate would accept a stalled partial import as "done" the moment it goes quiet, which is the exact
+failure mode this floor exists to catch.
 
 **Image pull time** was not measured — `ghcr.io/gramps-project/grampsweb:latest` was already
 cached locally in this session. For reference, the image is ~6.7GB uncompressed (it bundles
