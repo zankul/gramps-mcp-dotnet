@@ -71,54 +71,90 @@ previous run) for these runs, so they exclude image-pull time — see the note b
 | **Total: cold `up --wait` → fully seeded and healthy** | **~46-51s** | Measured twice on `docker-compose.test.yml` (46.6s, 51.1s) and once seeded on `docker-compose.dev.yml` (46.1s) via a port-remapped override. The un-seeded `docker-compose.dev.yml` path (no import) came up in ~17s. |
 
 This sets the timeout budget for a later CI live-test workflow: the import script's own
-`OVERALL_TIMEOUT_S` is 180s and the healthcheck allows up to `5s x 60 = 300s` — both comfortably
-above the ~50s observed (>3x margin) while still failing fast if something is genuinely stuck,
-rather than the 900s/1200s this was originally set to (an estimate that turned out to be an order
-of magnitude too pessimistic once the real import was measured). A CI step timeout of 5 minutes
-for `up --wait` has headroom without masking a genuine regression.
+`OVERALL_TIMEOUT_S` is 180s and the healthcheck allows up to `5s x 90 = 450s` (that 90-retry figure
+covers `get_token_with_retry`'s 120s reboot-race bound *plus* the 180s import timeout, plus
+margin — both are comfortably above the ~50s normally observed, while still failing fast if
+something is genuinely stuck, rather than the 900s/1200s this was originally set to). A CI step
+timeout for `up --wait` should be at least ~8 minutes to clear that 450s healthcheck budget with
+room to spare — 5 minutes would cut off a run the healthcheck is still legitimately retrying.
 
 **Seeding state machine.** `grampsweb_init`'s script (identical in both compose files apart from
-the dev file's opt-in `if` gate and best-effort `|| echo` swallow) decides what to do from two
-signals: the current `people` count and whether `QUEUED_MARKER`
-(`/app/cache/.example_seed_queued`) exists. The order is deliberate and was the subject of a
-review round that caught a real bug: checking `people > 0` *before* the marker trips on the very
-first record committed — nowhere near done — and would report healthy on a half-imported tree. The
-fix gates "already seeded, skip" on **no marker and `people >= PEOPLE_FLOOR`** specifically;
-anything else (a marker present, or a nonzero sub-floor count with no marker at all) falls through
-to `wait_for_import`'s quiescence check instead of being fast-tracked past it. This was verified by
-restarting `grampsweb_init` mid-import (after the queue, before completion) and confirming it took
-the "already queued, waiting" branch rather than a false "skip" — it did not report healthy until
-the tree was genuinely complete, landing on the same 2157/10536 fingerprint with no duplication.
+the dev file's opt-in `if` gate and best-effort `|| echo` swallow, and one deliberate divergence
+covered below) decides what to do from two signals: the current `people` count and whether
+`QUEUED_MARKER` (`/app/cache/.example_seed_queued`) exists, giving four distinct states:
 
-One empirical note from that verification: this Gramps Web version's import appears to commit
-**atomically** from the API's perspective — polling `/api/metadata/` every 250ms during a live
-import showed `object_counts` sitting at all-zero and then jumping straight to the final
-2157-people/10536-object state in one step, never a gradual climb. A literal "500 of 2157
-committed" partial read could not be reproduced against the real import for that reason. The fix
-above doesn't depend on that being reproducible, though: it also covers (and was verified against)
-a queued-but-never-completed import (celery stopped right after the POST), which reliably produces
-a genuine stuck `people == 0` state.
+1. No marker, `people >= PEOPLE_FLOOR` — already fully seeded, skip immediately.
+2. No marker, `people == 0` — genuinely empty, safe to queue a new import.
+3. No marker, `0 < people < PEOPLE_FLOOR` — see below; this is where dev and test diverge.
+4. Marker present (any count) — an import is tracked as in flight; confirm via
+   `wait_for_import`'s quiescence check rather than guessing from a single reading.
+
+The order matters and was the subject of two review rounds. First bug: checking `people > 0`
+*before* the marker collapses states 1 and 3 into "skip", tripping on the very first record
+committed in state 4 and reporting healthy on a half-imported tree. Verified fixed by restarting
+`grampsweb_init` mid-import (after the queue, before completion) and confirming it took the
+"already queued, waiting" branch rather than a false "skip" — it did not report healthy until the
+tree was genuinely complete, landing on the same 2157/10536 fingerprint with no duplication.
+
+Second bug, in the fix for the first: re-queuing in state 3 looks tempting (nothing else in the
+`else` branch can make progress there) but is wrong on the dev stack specifically. A nonzero,
+sub-floor, unmarked count is indistinguishable from a developer's own small GEDCOM, or a person
+added through the UI — from `object_counts` alone there is no way to tell that apart from "an
+import that died partway through". Re-queuing would silently merge the example dataset into
+someone's real tree, which is worse than the deadlock this file exists to avoid. So the two stacks
+now handle state 3 differently, deliberately: **dev** logs a clear warning naming the count and the
+floor, does not import, does not wait, and proceeds to touch the sentinel — treating the tree as
+the developer's own. **test** fails fast, because that stack always starts cold (see the volumes
+note above), so state 3 there can't mean "someone's real data" — it can only mean something is
+genuinely wrong.
+
+Empirical note, relevant to how much weight to put on state 3 at all: this Gramps Web version's
+import appears to commit **atomically** from the API's perspective — polling `/api/metadata/`
+every 250ms during a live import showed `object_counts` sitting at all-zero and then jumping
+straight to the final 2157-people/10536-object state in one step, never a gradual climb. A literal
+"500 of 2157 committed" partial read could not be reproduced against the real import for that
+reason, which means state 3 looks to be unreachable *through this script's own import path* — an
+import that dies mid-transaction leaves no trace, not a partial count. It's only reachable by a
+tree gaining people some other way, which on dev is exactly the "developer's own data" case the
+warning handles, and on test shouldn't happen at all. The state-3 handling is accordingly more
+built-out than the importer's actual behavior currently requires; it's there for the case where
+that assumption stops holding (a different Gramps Web version, a differently-configured import),
+not because it's been observed to trigger.
 
 **Duplicate-import marker and its poisoning.** The marker is written *before* POSTing the import
 (closes the duplicate-import race: a restart between "queued" and "finished" waits instead of
 re-queuing) and is removed in three places: after a successful quiescent completion, after the
-file-read/POST itself fails, and after `wait_for_import` times out with `people` still below
-`PEOPLE_FLOOR` (a timeout at or above the floor leaves the marker, since that's very likely a
+file-read/POST itself fails, and after `wait_for_import` times out having *actually observed* a
+sub-floor count (a timeout at or above the floor leaves the marker, since that's very likely a
 live-but-slow import rather than a dead one, and re-queuing on top of it would be worse than
-waiting). All three paths were verified directly: a forced failure between the marker write and
-the POST left the marker removed and the tree still empty; stopping the celery worker right after
-queuing left `people` at 0 through a shortened timeout window and the marker was removed
-afterward; in both cases the very next normal start queued and completed a real import rather than
-waiting on a phantom one.
+waiting). That "actually observed" qualifier is load-bearing: `people` defaults to `0` and is only
+updated on a successful poll, so if every poll in the timeout window raised (grampsweb restarting,
+a sustained 502), the timeout path used to see the untouched default `0` and delete the marker on
+data it never actually read — turning a transient outage into the same duplicate-import race the
+marker exists to prevent. A `saw_successful_poll` flag now gates the removal on having genuinely
+observed a sub-floor count, not merely defaulted to one. All three removal paths were verified
+directly: a forced failure between the marker write and the POST left the marker removed and the
+tree still empty; stopping the celery worker right after queuing left `people` at a genuinely
+observed 0 through a shortened timeout window and the marker was removed afterward; in both cases
+the very next normal start queued and completed a real import rather than waiting on a phantom
+one.
 
-**Reboot-race defense.** Docker's restart policies don't honour `depends_on` — after a host reboot
-or daemon restart, `grampsweb_init` (`restart: unless-stopped`) can start before `grampsweb` does,
-since the ordering `grampsweb_bootstrap` provided during the original `up` no longer applies.
-`get_token_with_retry` (bounded at 120s) replaces a bare `get_token()` call for exactly this case.
-Verified by creating (but not starting) `grampsweb` and starting `grampsweb_init` standalone: it
-sat in `starting` health state, retrying silently, for the whole gap, then completed a normal
-seeded run the moment `grampsweb`/`grampsweb_bootstrap` came up — at no point did it report
-healthy against the unseeded tree.
+**Reboot-race defense — bounded, not closed, on dev.** Docker's restart policies don't honour
+`depends_on` — after a host reboot or daemon restart, `grampsweb_init` (`restart: unless-stopped`)
+can start before `grampsweb` does, since the ordering `grampsweb_bootstrap` provided during the
+original `up` no longer applies. `get_token_with_retry` (bounded at 120s) replaces a bare
+`get_token()` call for exactly this case, and was verified directly: creating (but not starting)
+`grampsweb` and starting `grampsweb_init` standalone left it sitting in `starting` health state,
+retrying silently, for the whole gap, then it completed a normal seeded run the moment
+`grampsweb`/`grampsweb_bootstrap` came up — it did not report healthy against the unseeded tree
+*within that 120s window*. Past 120s, dev's behavior is unchanged from its existing best-effort
+design: `get_token_with_retry` raises, the outer `python3 <<'PYEOF' || echo "..."` swallows it, and
+the script still touches `/run/init-done` — a `grampsweb` outage longer than 120s makes dev report
+healthy without having seeded, same as any other seeding failure on that stack. That's a
+deliberate trade-off (seeding is opt-in and best-effort; the empty-but-usable tree still works),
+not a gap in the retry itself — the retry's job is only to shrink the race window, not eliminate
+it. The test stack has no such gap: a `get_token_with_retry` failure there is not swallowed and
+propagates to the same `raise SystemExit(1)` / `restart: "no"` fail-fast path as any other error.
 
 **Test stack fails fast, not silently.** `docker-compose.test.yml`'s `grampsweb_init` uses
 `restart: "no"` (not `unless-stopped`, unlike every other service in that file): with
@@ -128,6 +164,12 @@ of its own and would hang indefinitely instead of failing. Verified by forcing a
 failure (a broken import file path): the container exited once, stayed exited, and
 `docker compose up -d --wait` returned a real, prompt failure (`dependency failed to start:
 container ... exited (1)`, exit code 1) rather than hanging.
+
+**Request timeouts make the other bounds real.** `urlopen` calls had no `timeout=`, so Python's
+default (block forever) applied. A hung gunicorn worker under import load — the heaviest thing
+this stack does — could wedge a single call indefinitely, and neither `get_token_with_retry`'s
+120s bound nor `OVERALL_TIMEOUT_S`'s 180s would ever fire, since both are only checked *between*
+calls, not while one is blocked. Every `urlopen` now passes `timeout=30`.
 
 **Configurable completion floor.** `PEOPLE_FLOOR` (default 2000, overridable via
 `GRAMPS_SEED_PEOPLE_FLOOR`) stays a hard gate on completion rather than a soft warning: quiescence

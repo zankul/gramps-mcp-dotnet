@@ -49,8 +49,11 @@
 # Set GRAMPS_SEED_EXAMPLE_DATA=true to have grampsweb_init also import the example.gramps
 # dataset that ships inside the grampsweb image itself (2000+ people, families, events —
 # useful for exercising gramps_search/gramps_relation/gramps_timeline against something
-# realistic instead of an empty tree). Only happens once per empty tree: grampsweb_init checks
-# the object counts first and skips the import if the tree already has people in it.
+# realistic instead of an empty tree). Only imports into a genuinely empty tree: a tree that
+# already has *some* people but fewer than expected, with no import tracked, is treated as your
+# own pre-existing data (a small GEDCOM, someone added through the UI) rather than a partial
+# example import, and is left alone instead of merged into. See grampsweb_init below for the
+# full decision logic.
 #
 # Gotcha: `$VARIABLE` inside a compose `command:` block is interpolated by Docker Compose at
 # *parse* time, from the host's environment — not by the container's shell at run time. The one
@@ -194,7 +197,12 @@ services:
             req = urllib.request.Request(
                 f"http://grampsweb:5000{path}", data=data, headers=headers, method=method
             )
-            with urllib.request.urlopen(req) as resp:
+            # Python's default socket timeout is None (block forever). Without this, a hung
+            # gunicorn worker under import load - the heaviest thing this stack does - would wedge
+            # a single urlopen call indefinitely, and neither get_token_with_retry's 120s bound
+            # nor OVERALL_TIMEOUT_S below would ever fire, since both are checked *between* calls,
+            # not while one is blocked.
+            with urllib.request.urlopen(req, timeout=30) as resp:
                 body = resp.read()
                 return json.loads(body) if body else None
 
@@ -239,6 +247,7 @@ services:
             last_change = start
             seen_people = []
             people = 0
+            saw_successful_poll = False
             while True:
                 if time.monotonic() - start > OVERALL_TIMEOUT_S:
                     print("Timed out waiting for example dataset import to become quiescent.")
@@ -248,7 +257,14 @@ services:
                     # waiting out the full timeout again forever. At/above the floor but not yet
                     # confirmed stable, leave the marker: that's very likely still a legitimate,
                     # if slow, import, and re-queuing a second one on top of it would be worse.
-                    if people < PEOPLE_FLOOR and os.path.exists(QUEUED_MARKER):
+                    # Gated on saw_successful_poll, not just `people < PEOPLE_FLOOR`: `people`
+                    # defaults to 0 and is only ever updated on a *successful* poll below - if
+                    # every single poll in this window raised (grampsweb restarting, a sustained
+                    # 502), that 0 is a default we never actually observed, not a real reading,
+                    # and removing the marker on it would let the next start queue a *second*
+                    # import on top of one that, for all we actually learned, might still be
+                    # running fine.
+                    if saw_successful_poll and people < PEOPLE_FLOOR and os.path.exists(QUEUED_MARKER):
                         os.remove(QUEUED_MARKER)
                     return False, people
                 try:
@@ -261,6 +277,7 @@ services:
                         pass
                     time.sleep(POLL_INTERVAL_S)
                     continue
+                saw_successful_poll = True
                 total = sum(counts.values())
                 people = counts.get("people", 0)
                 if not seen_people or seen_people[-1] != people:
@@ -285,13 +302,28 @@ services:
         people = object_counts(token).get("people", 0)
         marker_exists = os.path.exists(QUEUED_MARKER)
 
-        # Order matters: `people > 0` alone (the previous bug here) trips on the very first
-        # record committed, nowhere near done, and would report healthy on a half-imported tree.
-        # "Already seeded" is only safe to declare when there is no import in flight (no marker)
-        # *and* the count has genuinely reached the floor; anything else - a marker present, or a
-        # nonzero sub-floor count with no marker at all (shouldn't happen via our own code path,
-        # but if it does, still unresolved either way) - falls through to wait_for_import's
-        # proper quiescence check instead of being fast-tracked past it.
+        # Order matters, and there are four states to tell apart:
+        #   1. no marker, people >= PEOPLE_FLOOR    -> already fully seeded, nothing to do.
+        #   2. no marker, people == 0               -> genuinely empty, safe to queue.
+        #   3. no marker, 0 < people < PEOPLE_FLOOR  -> NOT ours to touch (see below).
+        #   4. marker present (any people count)    -> an import is tracked in flight - confirm
+        #      via wait_for_import rather than guessing from a single reading.
+        # `people > 0` alone (the original bug here) collapses states 1 and 3 into "skip", which
+        # trips on the very first record committed in state 4 and reports healthy on a
+        # half-imported tree. The other tempting fix - re-queuing in state 3 - is also wrong: a
+        # nonzero, sub-floor, unmarked count is indistinguishable from a developer's own small
+        # GEDCOM, or a person added through the UI, from object_counts alone. Re-queuing would
+        # merge the example dataset into someone's real tree, which is worse than the deadlock
+        # this file exists to avoid. State 3 is also more reachable here than it looks: it needs
+        # no failed import at all, just a persistent dev tree with 1-1999 people and seeding
+        # turned on.
+        #
+        # In practice, state 3 looks to be unreachable *through this script's own import path*:
+        # this version of Gramps Web's import commits atomically as observed via the API (checked
+        # directly - object_counts jumps straight from all-zero to the final count, never a
+        # gradual climb), so an import that dies mid-transaction leaves no trace, not a partial
+        # count. State 3 is only reachable by the tree gaining people some *other* way - which is
+        # exactly the case the dev branch below exists to protect.
         if not marker_exists and people >= PEOPLE_FLOOR:
             print(f"Tree already has {people} people (no import in flight) - skipping example dataset import.")
         elif not marker_exists and people == 0:
@@ -318,11 +350,18 @@ services:
                 raise
             print("Queued import of bundled example.gramps dataset (async, via Celery) - waiting for it to finish.")
             wait_for_import(token)
+        elif not marker_exists:
+            # State 3: seeding is opt-in and best-effort, and this tree already has data that
+            # isn't ours - treat it as the developer's own and leave it alone rather than
+            # importing on top of it or blocking on a wait that could never resolve either way.
+            print(
+                f"WARNING: tree has {people} people, below the {PEOPLE_FLOOR}-person floor, and "
+                "no import is tracked - assuming this is your own pre-existing data and skipping "
+                "the example dataset import rather than merging into it. Start from an empty "
+                "tree (delete the gramps_* volumes) to seed cleanly."
+            )
         else:
-            if marker_exists:
-                print(f"Example dataset import already queued by a previous run (marker: {QUEUED_MARKER}) - waiting for it to finish.")
-            else:
-                print(f"Tree has {people} people (below the {PEOPLE_FLOOR}-person floor, no import tracked) - confirming state before reporting healthy.")
+            print(f"Example dataset import already queued by a previous run (marker: {QUEUED_MARKER}) - waiting for it to finish.")
             wait_for_import(token)
         PYEOF
         fi
