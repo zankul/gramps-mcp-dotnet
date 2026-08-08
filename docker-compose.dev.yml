@@ -50,7 +50,13 @@ services:
   # restarts: "user already exists" is swallowed. Stays running (sleep infinity) rather than
   # exiting, and reports readiness via a healthcheck on a sentinel file instead of exit code —
   # keeps it a normal healthy service instead of showing as "exited"/failed in tools like
-  # Portainer that don't distinguish an intentional one-shot exit from a crash.
+  # Portainer that don't distinguish an intentional one-shot exit from a crash. The sentinel
+  # lives on this container's own ephemeral filesystem (/run), not a shared volume — if it
+  # persisted across restarts, a later redeploy that pulls a grampsweb image with *new*
+  # migrations could report healthy instantly from a stale sentinel and release grampsweb_celery
+  # before grampsweb finishes applying those new migrations, reintroducing the exact race this
+  # is meant to prevent. Keeping it ephemeral forces a fresh wait+bootstrap on every container
+  # start, which is cheap (a few seconds) when there's nothing new to do.
   grampsweb_init:
     <<: *grampsweb
     restart: unless-stopped
@@ -70,10 +76,10 @@ services:
         cd /app/src
         python3 -m gramps_webapi --config /app/config/config.cfg user add \
           --fullname Owner --role 4 owner owner || true
-        touch /tmp/init-done
+        touch /run/init-done
         sleep infinity
     healthcheck:
-      test: ["CMD", "test", "-f", "/tmp/init-done"]
+      test: ["CMD", "test", "-f", "/run/init-done"]
       interval: 5s
       timeout: 3s
       start_period: 5s
