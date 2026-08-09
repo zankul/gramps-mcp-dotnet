@@ -15,6 +15,11 @@ public enum LiveStackState
     /// <summary>The stack responded, but <c>POST /api/token/</c> failed with the configured credentials.</summary>
     AuthFailed,
 
+    /// <summary>Authenticated successfully, but every retried attempt to warm up the token store's
+    /// first real request kept hitting Gramps Web's rate limit — not a credentials problem, since
+    /// authentication itself already succeeded moments earlier.</summary>
+    TokenWarmUpRateLimited,
+
     /// <summary>Authenticated, but the tree has no data — the seed import never ran or was reset.</summary>
     TreeNotSeeded,
 

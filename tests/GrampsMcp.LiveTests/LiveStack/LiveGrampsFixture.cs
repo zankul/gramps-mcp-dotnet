@@ -78,9 +78,10 @@ public sealed class LiveGrampsFixture : IAsyncLifetime
 
         ApiClient = _serviceProvider.GetRequiredService<GrampsApiClient>();
 
-        if (!await WarmUpTokenAsync())
+        var warmUpFailure = await WarmUpTokenAsync();
+        if (warmUpFailure is not null)
         {
-            State = LiveStackState.AuthFailed;
+            State = warmUpFailure.Value;
             return;
         }
 
@@ -92,29 +93,38 @@ public sealed class LiveGrampsFixture : IAsyncLifetime
     /// <summary>
     /// Forces <see cref="GrampsApiClient"/>'s first real request now, so <c>GrampsTokenStore</c>
     /// authenticates (and caches the token) during fixture setup rather than lazily inside the
-    /// first test body — retried on 429 only; any other failure propagates immediately.
+    /// first test body — retried on 429. Any other transient failure (network blip, timeout,
+    /// malformed response) is caught here too, mirroring <see cref="LiveStackProbe.ProbeAsync"/>,
+    /// rather than propagating raw out of <see cref="IAsyncLifetime.InitializeAsync"/> and crashing
+    /// xunit fixture setup for the whole collection.
     /// </summary>
-    private async Task<bool> WarmUpTokenAsync()
+    /// <returns><see langword="null"/> on success, otherwise the <see cref="LiveStackState"/> the
+    /// fixture should report.</returns>
+    private async Task<LiveStackState?> WarmUpTokenAsync()
     {
         for (var attempt = 1; attempt <= MaxWarmUpAttempts; attempt++)
         {
             try
             {
                 await ApiClient.GetAsync<JsonElement>("/api/metadata/", CancellationToken.None);
-                return true;
+                return null;
             }
             catch (GrampsApiException exception) when (exception.StatusCode == HttpStatusCode.TooManyRequests)
             {
                 if (attempt == MaxWarmUpAttempts)
                 {
-                    return false;
+                    return LiveStackState.TokenWarmUpRateLimited;
                 }
 
                 await Task.Delay(WarmUpRetryDelay);
             }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
+            {
+                return LiveStackState.StackUnreachable;
+            }
         }
 
-        return false;
+        return LiveStackState.TokenWarmUpRateLimited;
     }
 
     public async Task DisposeAsync()

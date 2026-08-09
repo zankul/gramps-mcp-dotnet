@@ -34,6 +34,11 @@ internal static class LiveStackGate
             $"({LiveStackOptions.UsernameVariable}/{LiveStackOptions.PasswordVariable}). If you started " +
             $"the stack with {RemedyCommand}, the default owner/owner credentials should work — " +
             "check for a stale/mismatched .env override.",
+        LiveStackState.TokenWarmUpRateLimited =>
+            $"Live Gramps stack at {fixture.Options.ApiUrl} accepted the configured credentials, but " +
+            "every retried warm-up request still hit Gramps Web's 1 request/second rate limit. This is " +
+            "rate-limit contention, not bad credentials — retry the test run, or reduce whatever else " +
+            $"(other test runs, manual curls) is hitting {fixture.Options.ApiUrl} concurrently.",
         LiveStackState.TreeNotSeeded =>
             $"Live Gramps stack at {fixture.Options.ApiUrl} is reachable but the tree has no people — " +
             $"the example-dataset import never ran. Recreate the stack cold: {RemedyCommand} " +
