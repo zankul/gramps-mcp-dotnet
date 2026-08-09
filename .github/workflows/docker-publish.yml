@@ -20,20 +20,20 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # metadata-action's flavor=auto for "latest" compares this tag against sibling
           # semver tags to decide whether latest should move, which needs full tag history.
           fetch-depth: 0
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -41,34 +41,41 @@ jobs:
 
       # edge tracks the latest main commit. "latest" uses metadata-action's default
       # flavor=auto, which only points it at the highest semver tag seen so far, so a
-      # backport release on an older line can't drag it backward. No type=ref/branch or
-      # bare sha- tag here on purpose: those accumulated a permanent, ever-growing tag per
-      # commit in GHCR. A sha-<short> tag is still used below as a *temporary* staging tag
-      # for the pre-scan gate, but it's deleted from the registry once promoted.
+      # backport release on an older line can't drag it backward. No type=ref/branch tag here
+      # on purpose — that accumulated as a permanent, ever-growing tag alongside edge.
       - name: Compute image metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=sha,prefix=sha-,format=short
+            type=raw,value=staging
             type=raw,value=edge,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
 
-      # Split the computed tags: the immutable sha-<short> tag is pushed first and scanned;
-      # only if Scout clears it do the mutable edge/semver/latest tags get promoted to
-      # point at that same digest, so nothing pullable under a mutable tag skips the gate.
+      # Split the computed tags: the "staging" tag is pushed first and scanned; only if Scout
+      # clears it do the mutable edge/semver/latest tags get promoted (via imagetools create)
+      # to point at that same digest, so nothing pullable under a mutable tag skips the gate.
+      #
+      # "staging" is a fixed, reused name (not a unique sha-<short> per commit) deliberately:
+      # imagetools create points promoted tags at the exact same digest as the staging push,
+      # so GHCR represents them as one version with multiple tag names, not separate versions.
+      # Deleting a version by tag name deletes *all* tags on it — a prior version of this
+      # workflow used a unique sha-<short> staging tag and deleted-by-tag-name after
+      # promotion, which took the just-promoted "edge" tag down with it since they shared a
+      # version. Reusing one "staging" name means each new push just repoints it, leaving the
+      # *previous* build's now-tagless version orphaned (not automatically deleted — see the
+      # note at the bottom of this file for why), never the version currently backing
+      # edge/latest/semver.
       - name: Split tags into staging vs promoted
         id: split
         run: |
           tags="${{ steps.meta.outputs.tags }}"
-          staging=$(echo "$tags" | grep ':sha-' | head -n1)
-          promoted=$(echo "$tags" | grep -v ':sha-' || true)
-          staging_tag="${staging#*:}"
+          staging=$(echo "$tags" | grep ':staging$' | head -n1)
+          promoted=$(echo "$tags" | grep -v ':staging$' || true)
           echo "staging=$staging" >> "$GITHUB_OUTPUT"
-          echo "staging_tag=$staging_tag" >> "$GITHUB_OUTPUT"
           {
             echo "promoted<<TAGS_EOF"
             echo "$promoted"
@@ -77,7 +84,7 @@ jobs:
 
       - name: Build and push (staging tag)
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -91,9 +98,8 @@ jobs:
       # scans — without it every job fails with "user githubactions not entitled to use Docker
       # Scout". Only critical findings fail the job — this runs on every push, not just
       # releases, so a block-on-high threshold would be too disruptive against unpatched
-      # base-image CVEs. The staging tag above is already pushed (immutable, sha-scoped), but no
-      # mutable tag (edge/latest/semver) exists yet, so nothing "normal" is pullable until this
-      # passes.
+      # base-image CVEs. The staging tag above is already pushed, but no mutable tag
+      # (edge/latest/semver) exists yet, so nothing "normal" is pullable until this passes.
       - name: Docker Scout CVE scan
         uses: docker/scout-action@v1
         with:
@@ -113,31 +119,13 @@ jobs:
             docker buildx imagetools create -t "$tag" "ghcr.io/${{ github.repository }}@${digest}"
           done <<< "${{ steps.split.outputs.promoted }}"
 
-      # The sha- tag above only exists so Scout has something immutable to gate on before any
-      # mutable tag (edge/latest/semver) is touched. Once promotion succeeds nothing needs it
-      # any more, so delete it rather than let it sit in GHCR forever as one more version.
-      #
-      # This looks up the exact version id for the staging tag and deletes only that one via
-      # the API directly, rather than a bulk "delete old versions" action: a prior version of
-      # this step used actions/delete-package-versions with an input it silently doesn't
-      # support (tag-names), which made it fall back to its own defaults
-      # (min-versions-to-keep=0, no ignore-versions filter) and wipe every version in the
-      # package instead of just the staging one. Never hand a bulk-delete step anything less
-      # than an exact, verified target.
-      - name: Delete staging tag
-        if: steps.split.outputs.promoted != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          owner="${{ github.repository_owner }}"
-          name="${{ github.event.repository.name }}"
-          staging_tag="${{ steps.split.outputs.staging_tag }}"
-          version_id=$(gh api "/users/$owner/packages/container/$name/versions?per_page=100" \
-            --jq ".[] | select((.metadata.container.tags // []) | index(\"$staging_tag\")) | .id" | head -n1)
-          if [ -z "$version_id" ]; then
-            echo "::warning::No package version found for staging tag '$staging_tag'; nothing deleted"
-            exit 0
-          fi
-          gh api --method DELETE "/users/$owner/packages/container/$name/versions/$version_id"
-          echo "Deleted staging version $version_id (tag $staging_tag)"
+      # No automated cleanup of orphaned "staging" versions here, deliberately. GHCR lists each
+      # platform-specific manifest of a multi-arch image as its own version, untagged, referenced
+      # only by digest from the tagged manifest-list index — so a tool that bulk-deletes
+      # "untagged" versions can't tell a genuinely orphaned build apart from a live image's arch
+      # variants. actions/delete-package-versions' delete-only-untagged-versions has an open,
+      # unresolved bug doing exactly that (actions/delete-package-versions#162: deleted non-x86
+      # manifests out from under a still-tagged multi-arch image). Since "staging" is a single
+      # reused tag name (not unique per commit), it no longer grows the visible tag list either
+      # way — if orphaned untagged versions need pruning later, do it by hand via the package's
+      # "Manage versions" page, checking each one isn't still referenced by a live manifest list.
