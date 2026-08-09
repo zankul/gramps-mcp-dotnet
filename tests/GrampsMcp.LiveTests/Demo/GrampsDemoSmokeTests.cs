@@ -3,23 +3,21 @@ using GrampsMcp.Server.Gramps;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace GrampsMcp.IntegrationTests;
+namespace GrampsMcp.LiveTests.Demo;
 
 /// <summary>
 /// Authenticates against the public demo.grampsweb.org tree with its published read-only
-/// credentials (owner/owner). Opt-in only — set GRAMPS_RUN_DEMO_SMOKE_TEST=true to run it, so CI
-/// does not depend on a third-party server being up.
+/// credentials (owner/owner). Opt-in via the "Demo" trait (excluded from a bare `dotnet test` by
+/// `tests/default.runsettings`) rather than a runtime early-return — a prior version of this test
+/// returned silently when GRAMPS_RUN_DEMO_SMOKE_TEST wasn't set, reporting green while actually
+/// skipping. That pattern is exactly what this project's tiering exists to eliminate.
 /// </summary>
+[Trait("Tier", "Demo")]
 public class GrampsDemoSmokeTests
 {
     [Fact]
     public async Task Authenticate_AgainstDemoTree_ListsPeopleAndReadsPermissions()
     {
-        if (Environment.GetEnvironmentVariable("GRAMPS_RUN_DEMO_SMOKE_TEST") != "true")
-        {
-            return;
-        }
-
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {

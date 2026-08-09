@@ -6,14 +6,16 @@
 | --- | --- | --- | --- |
 | Unit | (default, no trait) | Every PR (CI) | Nothing — offline, no Docker |
 | Live | `[Trait("Tier", "Live")]` | Nightly / manual dispatch | `docker-compose.test.yml` stack, see below |
-| Demo | `[Trait("Tier", "Demo")]` | Opt-in (`GRAMPS_RUN_DEMO_SMOKE_TEST=true`) | The public `demo.grampsweb.org` |
+| Demo | `[Trait("Tier", "Demo")]` | Opt-in (`--filter "Tier=Demo" -p:RunSettingsFilePath=`) | The public `demo.grampsweb.org` |
 
 Live tests exercise real HTTP calls against a real Gramps Web instance seeded with a known dataset
 (the `example.gramps` demo tree bundled in the `grampsweb` image, ~2157 people) — this is where
 `gramps_search`/`gramps_relation`/`gramps_timeline`/write-tool round-trips get checked against
 actual API responses rather than mocked ones. They are not part of the default `dotnet test` run
-(see `CLAUDE.md`'s runsettings note); a later PR adds the test project(s) and CI workflow for this
-tier. This file documents the stack those tests will run against.
+(see `CLAUDE.md`'s runsettings note). `tests/GrampsMcp.LiveTests/LiveStack/` holds the skeleton
+(readiness probe, DI-graph fixture, the `LiveStackGate`/`LoopbackGuard` guards) plus one smoke test,
+`Metadata_IsReachable`; contract, protocol, and write-round-trip tests land in later PRs. This file
+documents the stack those tests run against.
 
 ## Bringing up the live-test stack
 
@@ -36,10 +38,10 @@ why it uses no named volumes. `--wait` blocks until the example dataset has *fin
 
 ## Running live tests
 
-Once the stack is up and healthy (once the test project(s) land in a later PR):
+Once the stack is up and healthy:
 
 ```bash
-dotnet test --filter "Tier=Live" -p:RunSettingsFilePath=
+dotnet test tests/GrampsMcp.LiveTests --filter "Tier=Live" -p:RunSettingsFilePath=
 ```
 
 (the explicit `-p:RunSettingsFilePath=` is required — see `CLAUDE.md`; a bare `--filter` doesn't

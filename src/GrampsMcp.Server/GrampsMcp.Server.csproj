@@ -9,6 +9,6 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="GrampsMcp.UnitTests" />
-    <InternalsVisibleTo Include="GrampsMcp.IntegrationTests" />
+    <InternalsVisibleTo Include="GrampsMcp.LiveTests" />
   </ItemGroup>
 </Project>

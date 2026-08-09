@@ -43,8 +43,9 @@ packages via `dotnet list package --vulnerable`.
 violations and analyzer warnings — including SecurityCodeScan findings — fail the build, not just
 `dotnet format`.
 
-Integration tests against the public `demo.grampsweb.org` instance are opt-in: set
-`GRAMPS_RUN_DEMO_SMOKE_TEST=true` so CI doesn't depend on a third-party server being up.
+The Demo tier runs against the public `demo.grampsweb.org` instance and is opt-in the same way as
+Live: excluded by `tests/default.runsettings`, selected explicitly with
+`dotnet test --filter "Tier=Demo" -p:RunSettingsFilePath=`. CI never runs it.
 
 ## Architecture
 
