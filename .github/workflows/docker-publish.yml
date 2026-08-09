@@ -41,7 +41,10 @@ jobs:
 
       # edge tracks the latest main commit. "latest" uses metadata-action's default
       # flavor=auto, which only points it at the highest semver tag seen so far, so a
-      # backport release on an older line can't drag it backward.
+      # backport release on an older line can't drag it backward. No type=ref/branch or
+      # bare sha- tag here on purpose: those accumulated a permanent, ever-growing tag per
+      # commit in GHCR. A sha-<short> tag is still used below as a *temporary* staging tag
+      # for the pre-scan gate, but it's deleted from the registry once promoted.
       - name: Compute image metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -49,14 +52,13 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=sha,prefix=sha-,format=short
-            type=ref,event=branch
             type=raw,value=edge,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
 
       # Split the computed tags: the immutable sha-<short> tag is pushed first and scanned;
-      # only if Scout clears it do the mutable branch/edge/semver/latest tags get promoted to
+      # only if Scout clears it do the mutable edge/semver/latest tags get promoted to
       # point at that same digest, so nothing pullable under a mutable tag skips the gate.
       - name: Split tags into staging vs promoted
         id: split
@@ -64,7 +66,9 @@ jobs:
           tags="${{ steps.meta.outputs.tags }}"
           staging=$(echo "$tags" | grep ':sha-' | head -n1)
           promoted=$(echo "$tags" | grep -v ':sha-' || true)
+          staging_tag="${staging#*:}"
           echo "staging=$staging" >> "$GITHUB_OUTPUT"
+          echo "staging_tag=$staging_tag" >> "$GITHUB_OUTPUT"
           {
             echo "promoted<<TAGS_EOF"
             echo "$promoted"
@@ -88,7 +92,7 @@ jobs:
       # Scout". Only critical findings fail the job — this runs on every push, not just
       # releases, so a block-on-high threshold would be too disruptive against unpatched
       # base-image CVEs. The staging tag above is already pushed (immutable, sha-scoped), but no
-      # mutable tag (branch/edge/latest) exists yet, so nothing "normal" is pullable until this
+      # mutable tag (edge/latest/semver) exists yet, so nothing "normal" is pullable until this
       # passes.
       - name: Docker Scout CVE scan
         uses: docker/scout-action@v1
@@ -108,3 +112,15 @@ jobs:
             [ -z "$tag" ] && continue
             docker buildx imagetools create -t "$tag" "ghcr.io/${{ github.repository }}@${digest}"
           done <<< "${{ steps.split.outputs.promoted }}"
+
+      # The sha- tag above only exists so Scout has something immutable to gate on before any
+      # mutable tag (edge/latest/semver) is touched. Once promotion succeeds nothing needs it
+      # any more, so delete it rather than let it sit in GHCR forever as one more version.
+      - name: Delete staging tag
+        if: steps.split.outputs.promoted != ''
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ github.event.repository.name }}
+          package-type: container
+          min-versions-to-keep: 0
+          tag-names: ${{ steps.split.outputs.staging_tag }}
