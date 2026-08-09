@@ -116,11 +116,28 @@ jobs:
       # The sha- tag above only exists so Scout has something immutable to gate on before any
       # mutable tag (edge/latest/semver) is touched. Once promotion succeeds nothing needs it
       # any more, so delete it rather than let it sit in GHCR forever as one more version.
+      #
+      # This looks up the exact version id for the staging tag and deletes only that one via
+      # the API directly, rather than a bulk "delete old versions" action: a prior version of
+      # this step used actions/delete-package-versions with an input it silently doesn't
+      # support (tag-names), which made it fall back to its own defaults
+      # (min-versions-to-keep=0, no ignore-versions filter) and wipe every version in the
+      # package instead of just the staging one. Never hand a bulk-delete step anything less
+      # than an exact, verified target.
       - name: Delete staging tag
         if: steps.split.outputs.promoted != ''
-        uses: actions/delete-package-versions@v5
-        with:
-          package-name: ${{ github.event.repository.name }}
-          package-type: container
-          min-versions-to-keep: 0
-          tag-names: ${{ steps.split.outputs.staging_tag }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          owner="${{ github.repository_owner }}"
+          name="${{ github.event.repository.name }}"
+          staging_tag="${{ steps.split.outputs.staging_tag }}"
+          version_id=$(gh api "/users/$owner/packages/container/$name/versions?per_page=100" \
+            --jq ".[] | select((.metadata.container.tags // []) | index(\"$staging_tag\")) | .id" | head -n1)
+          if [ -z "$version_id" ]; then
+            echo "::warning::No package version found for staging tag '$staging_tag'; nothing deleted"
+            exit 0
+          fi
+          gh api --method DELETE "/users/$owner/packages/container/$name/versions/$version_id"
+          echo "Deleted staging version $version_id (tag $staging_tag)"
