@@ -1,4 +1,6 @@
+using System.Net;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using GrampsMcp.Server.Gramps;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,6 +17,15 @@ namespace GrampsMcp.LiveTests.LiveStack;
 /// </summary>
 public sealed class LiveGrampsFixture : IAsyncLifetime
 {
+    // Same collision as LiveStackProbe's own POST /api/token/ call (see the comment there):
+    // GrampsTokenStore lazily authenticates on its first real request, which — moments after the
+    // probe's own token call — can still land inside Gramps Web's 1 request/second bucket for
+    // POST /api/token/ and come back 429. Forcing that first request here, retried, means the
+    // token gets cached (GrampsTokenStore keeps it for the DI container's lifetime) before any
+    // test body runs, instead of surfacing the 429 as a confusing failure in an unrelated test.
+    private const int MaxWarmUpAttempts = 3;
+    private static readonly TimeSpan WarmUpRetryDelay = TimeSpan.FromMilliseconds(1500);
+
     private ServiceProvider? _serviceProvider;
 
     public LiveStackOptions Options { get; } = LiveStackOptions.FromEnvironment();
@@ -67,9 +78,43 @@ public sealed class LiveGrampsFixture : IAsyncLifetime
 
         ApiClient = _serviceProvider.GetRequiredService<GrampsApiClient>();
 
+        if (!await WarmUpTokenAsync())
+        {
+            State = LiveStackState.AuthFailed;
+            return;
+        }
+
         RawClient = new HttpClient { BaseAddress = new Uri(Options.ApiUrl) };
         RawClient.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", probeResult.AccessToken);
+    }
+
+    /// <summary>
+    /// Forces <see cref="GrampsApiClient"/>'s first real request now, so <c>GrampsTokenStore</c>
+    /// authenticates (and caches the token) during fixture setup rather than lazily inside the
+    /// first test body — retried on 429 only; any other failure propagates immediately.
+    /// </summary>
+    private async Task<bool> WarmUpTokenAsync()
+    {
+        for (var attempt = 1; attempt <= MaxWarmUpAttempts; attempt++)
+        {
+            try
+            {
+                await ApiClient.GetAsync<JsonElement>("/api/metadata/", CancellationToken.None);
+                return true;
+            }
+            catch (GrampsApiException exception) when (exception.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                if (attempt == MaxWarmUpAttempts)
+                {
+                    return false;
+                }
+
+                await Task.Delay(WarmUpRetryDelay);
+            }
+        }
+
+        return false;
     }
 
     public async Task DisposeAsync()

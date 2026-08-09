@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using GrampsMcp.Server.Gramps;
@@ -21,6 +22,13 @@ public sealed record LiveStackProbeResult(
 /// </summary>
 internal static class LiveStackProbe
 {
+    // Gramps Web hardcodes a 1 request/second rate limit on POST /api/token/, keyed by source IP.
+    // Every host-originated call to the published port gets NAT'd through the same Docker bridge
+    // gateway IP, so it collides with whatever else (this probe run, a manual curl, a previous
+    // test run) hit the endpoint in the last second. Measured recovery is ~2s; retry with margin.
+    private const int MaxAuthAttempts = 3;
+    private static readonly TimeSpan AuthRetryDelay = TimeSpan.FromMilliseconds(1500);
+
     public static async Task<LiveStackProbeResult> ProbeAsync(
         LiveStackOptions options, HttpClient httpClient, CancellationToken cancellationToken)
     {
@@ -66,25 +74,43 @@ internal static class LiveStackProbe
     private static async Task<string?> TryAuthenticateAsync(
         LiveStackOptions options, HttpClient httpClient, CancellationToken cancellationToken)
     {
-        try
+        for (var attempt = 1; attempt <= MaxAuthAttempts; attempt++)
         {
-            using var response = await httpClient.PostAsJsonAsync(
-                "api/token/",
-                new { username = options.Username, password = options.Password },
-                cancellationToken);
+            try
+            {
+                using var response = await httpClient.PostAsJsonAsync(
+                    "api/token/",
+                    new { username = options.Username, password = options.Password },
+                    cancellationToken);
 
-            if (!response.IsSuccessStatusCode)
+                if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                {
+                    if (attempt == MaxAuthAttempts)
+                    {
+                        return null;
+                    }
+
+                    await Task.Delay(AuthRetryDelay, cancellationToken);
+                    continue;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    // A genuine auth failure (bad credentials, etc.) should fail fast rather than
+                    // burn through the remaining retries meant for the 429 collision case.
+                    return null;
+                }
+
+                var payload = await response.Content.ReadFromJsonAsync<GrampsTokenResponse>(cancellationToken);
+                return payload?.AccessToken;
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
             {
                 return null;
             }
+        }
 
-            var payload = await response.Content.ReadFromJsonAsync<GrampsTokenResponse>(cancellationToken);
-            return payload?.AccessToken;
-        }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
-        {
-            return null;
-        }
+        return null;
     }
 
     private static async Task<LiveStackState?> CheckSeedStateAsync(
