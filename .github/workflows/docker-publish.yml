@@ -91,6 +91,7 @@ jobs:
           push: true
           tags: ${{ steps.split.outputs.staging }}
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=min
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
