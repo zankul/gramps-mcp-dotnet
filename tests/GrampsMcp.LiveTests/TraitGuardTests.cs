@@ -9,7 +9,7 @@ namespace GrampsMcp.LiveTests;
 /// <c>dotnet test</c> at the repo root, defeating the whole point of this project being
 /// excluded-by-default. This test makes that mechanical instead of relying on review.
 /// </summary>
-[Trait("Tier", "Live")]
+[Trait("Tier", "Unit")]
 public class TraitGuardTests
 {
     [Fact]

@@ -30,7 +30,7 @@ internal static class LiveStackProbe
         }
 
         var accessToken = await TryAuthenticateAsync(options, httpClient, cancellationToken);
-        if (accessToken is null)
+        if (string.IsNullOrEmpty(accessToken))
         {
             return new LiveStackProbeResult(LiveStackState.AuthFailed, null, null);
         }
@@ -103,14 +103,17 @@ internal static class LiveStackProbe
             var metadata = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
             if (!metadata.TryGetProperty("object_counts", out var counts) ||
                 !counts.TryGetProperty("people", out var people) ||
-                people.GetInt32() <= 0)
+                people.ValueKind != JsonValueKind.Number ||
+                !people.TryGetInt32(out var peopleCount) ||
+                peopleCount <= 0)
             {
                 return LiveStackState.TreeNotSeeded;
             }
 
             return null;
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
+        catch (Exception exception)
+            when (exception is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException)
         {
             return LiveStackState.ImportIncomplete;
         }
