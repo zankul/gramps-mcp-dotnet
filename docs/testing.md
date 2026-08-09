@@ -218,19 +218,48 @@ Full `object_counts` from a freshly seeded tree (`GET /api/metadata/` against
 (sum: 10536, matching the search index's `search.sifts.count` in `/api/metadata/` — this is the
 "total objects" figure the import-quiescence poll in both compose files watches.)
 
-## Capturing ExampleTree (placeholder — for a later PR)
+## Capturing ExampleTree
 
-Live tests that assert on specific people/families/events need real Gramps IDs and names from the
-seeded tree to use as anchors (e.g. "person I0044 is named X and has Y children"). A later PR
-should capture those the same way the fingerprint above was captured — **never** write an ID or
-name from memory or from the upstream Gramps project's own docs, since `example.gramps`'s exact
-contents are what's actually running, not what's assumed:
+`tests/GrampsMcp.LiveTests/ExampleTree.cs` holds the anchor Gramps IDs, names, relationship string,
+search hit count, and `object_counts` fingerprint that `SeededTreeTests.cs` guards against drift.
+Every value in it was read back from a real running stack — **never** write an ID, name, or count
+from memory or from the upstream Gramps project's own docs, since `example.gramps`'s exact contents
+are what's actually running, not what's assumed. To re-capture (e.g. after an upstream image
+refresh changes the bundled dataset):
 
-1. Bring up `docker-compose.test.yml` per above.
-2. Authenticate (`POST /api/token/` with `owner`/`owner`) and hit `GET /api/metadata/` to confirm
-   `object_counts` still matches the fingerprint above (if it doesn't, the anchors below need
-   re-capturing, not just this metadata block).
-3. Pull a `keys=gramps_id,primary_name` page (e.g. `GET /api/people/?keys=gramps_id,primary_name
-   &pagesize=20`) and paste the returned Gramps IDs and names verbatim into the test fixtures —
-   do not transcribe or guess them.
-4. Repeat for whichever other object types (families, events, places) the new tests anchor on.
+1. Bring up the stack: `docker compose -f docker-compose.test.yml -p gramps-test up -d --wait`.
+2. Record the image digest: `docker image inspect ghcr.io/gramps-project/grampsweb:latest --format
+   '{{index .RepoDigests 0}}'`.
+3. Authenticate: `POST /api/token/` with `{"username": "owner", "password": "owner"}` against
+   `http://localhost:8091`, and use the returned `access_token` as a `Bearer` header on every
+   request below.
+4. Fingerprint: `GET /api/metadata/` and read `object_counts` — compare against the block above; if
+   it has drifted, the anchors below need re-capturing too, not just this block.
+5. Anchor person: page through `GET /api/people/?keys=gramps_id,primary_name,handle,family_list,
+   event_ref_list&pagesize=200&page=N`, and pick one with a non-empty surname and several
+   families/events (favor breadth of coverage over any specific individual — the goal is a stable,
+   well-connected anchor, not a "correct" person). Record its `gramps_id`, `handle`, and
+   `primary_name.first_name`/`primary_name.surname_list[0].surname` verbatim.
+6. Anchor family/place/event: `GET /api/people/{handle}?profile=self,families,events` on the anchor
+   person returns its families inline (take the first family's `gramps_id`/`handle`) and its
+   `profile.events` (take the birth event's summary). Resolve the *raw* event handle from the
+   person's own `event_ref_list[0].ref` via `GET /api/events/{handle}` (records `gramps_id`,
+   `handle`, `type`), then follow that event's `place` field via `GET /api/places/{handle}`
+   (records `gramps_id`, `handle`, `name.value`).
+7. Known relationship: pick a second person clearly related to the anchor (e.g. a child from one of
+   the families in step 6 — read their `handle`/`gramps_id` straight off the family record's
+   `child_ref_list`), then call `GET /api/relations/{anchorHandle}/{otherHandle}` — **note this
+   endpoint takes handles, not Gramps IDs** — and record `relationship_string` verbatim.
+8. Common search surname: `GET /api/search/?query={surname}&pagesize=1` on the anchor's surname (or
+   any other surname expected to have many hits) and record the `X-Total-Count` response header as
+   the hit count.
+9. Paste every value into `ExampleTree.cs` verbatim, update its header comment with the digest from
+   step 2 and today's date, and re-run `SeededTree_ObjectCounts_MatchCapturedFingerprint` /
+   `SeededTree_AnchorIds_AllResolve` against the same stack to confirm the new constants resolve.
+
+Captured 2026-08-09 against digest
+`sha256:6f81fa942f1d447a953e24eeddf17b28db9f5d55e5ba10ce2a76cfcf8896bb59` (unchanged from the
+2026-08-08 capture above): anchor person `I0027` ("Matthias, Jr." Ball, handle
+`B3UJQCZHDXII99AWW4`), anchor family `F0007`, anchor place `P1349` (Amarillo), anchor event `E1322`
+(Birth), son `I0033` (Jasper Ball) with `relationship_string` `"son"`, and 68 search hits for
+`Ball`. See `ExampleTree.cs` for the full set.

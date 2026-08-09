@@ -61,6 +61,15 @@ public sealed class LiveGrampsFixture : IAsyncLifetime
             return;
         }
 
+        // gramps_webapi rate-limits POST /api/token/ to 1/second (fixed window). The probe above
+        // just consumed that window authenticating RawClient; without this gap, the DI-built
+        // GrampsApiClient's own GrampsTokenStore (a separate, uncoordinated token holder) makes
+        // its own first lazy /api/token/ call microseconds later on the first test's first
+        // request and gets a 429 every time, deterministically — not an occasional flake. Letting
+        // the window roll over here, once, is cheaper than teaching GrampsTokenStore to accept a
+        // pre-fetched token just for this test fixture.
+        await Task.Delay(TimeSpan.FromSeconds(1.1), CancellationToken.None);
+
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
