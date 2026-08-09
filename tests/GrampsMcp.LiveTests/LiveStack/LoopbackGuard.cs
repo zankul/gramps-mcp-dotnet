@@ -1,9 +1,10 @@
 namespace GrampsMcp.LiveTests.LiveStack;
 
 /// <summary>
-/// Makes <c>docs/PLAN.md</c>'s "never write to a non-local instance" rule mechanical rather than
-/// remembered. No write tests exist yet (that's step 10), but the guard lands now so every write
-/// test added later starts with this check rather than reinventing it.
+/// Makes <c>docs/PLAN.md</c>'s Phase 5 testing constraint — "write paths are exercised only
+/// against a local Gramps Web container" — mechanical rather than remembered. No write tests exist
+/// yet (that's step 10), but the guard lands now so every write test added later starts with this
+/// check rather than reinventing it.
 /// </summary>
 internal static class LoopbackGuard
 {
@@ -14,8 +15,8 @@ internal static class LoopbackGuard
         if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) || !IsLocal(uri.Host))
         {
             throw new InvalidOperationException(
-                $"Refusing to run write tests against {baseUrl}: docs/PLAN.md forbids writes to any " +
-                "non-local instance.");
+                $"Refusing to run write tests against {baseUrl}: docs/PLAN.md restricts write-path " +
+                "testing to a local Gramps Web container.");
         }
     }
 
