@@ -43,9 +43,14 @@ packages via `dotnet list package --vulnerable`.
 violations and analyzer warnings — including SecurityCodeScan findings — fail the build, not just
 `dotnet format`.
 
-The Demo tier runs against the public `demo.grampsweb.org` instance and is opt-in the same way as
-Live: excluded by `tests/default.runsettings`, selected explicitly with
-`dotnet test --filter "Tier=Demo" -p:RunSettingsFilePath=`. CI never runs it.
+The Demo tier runs against the public `demo.grampsweb.org` instance — a community-run sandbox we
+don't control, reset by its maintainers every couple of hours — and exists as a **canary**: it
+proves our client still works against a real-world Gramps Web deployment, not just this repo's own
+pinned image in `docker-compose.test.yml`. It's opt-in locally the same way as Live: excluded by
+`tests/default.runsettings`, selected explicitly with
+`dotnet test --filter "Tier=Demo" -p:RunSettingsFilePath=`. `.github/workflows/live-tests.yml` runs
+it nightly and on PRs carrying the `run-live-tests` label, as its own `continue-on-error: true`
+job — a third-party outage must never block a merge, so this is observability, not a gate.
 
 ## Architecture
 

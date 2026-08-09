@@ -72,7 +72,7 @@ previous run) for these runs, so they exclude image-pull time — see the note b
 | Healthcheck detection → `gramps-mcp` starts | ~5s | Bounded by the 5s healthcheck interval. |
 | **Total: cold `up --wait` → fully seeded and healthy** | **~46-51s** | Measured twice on `docker-compose.test.yml` (46.6s, 51.1s) and once seeded on `docker-compose.dev.yml` (46.1s) via a port-remapped override. The un-seeded `docker-compose.dev.yml` path (no import) came up in ~17s. |
 
-This sets the timeout budget for a later CI live-test workflow: the import script's own
+This sets the timeout budget for `.github/workflows/live-tests.yml`'s CI live-test job: the import script's own
 `OVERALL_TIMEOUT_S` is 180s and the healthcheck allows up to `5s x 90 = 450s` (that 90-retry figure
 covers `get_token_with_retry`'s 120s reboot-race bound *plus* the 180s import timeout, plus
 margin — both are comfortably above the ~50s normally observed, while still failing fast if

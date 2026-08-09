@@ -1,0 +1,126 @@
+name: Live Tests
+
+# Runs the "Live" test tier (tests/GrampsMcp.LiveTests) against a real, ephemeral Gramps Web
+# Docker stack (docker-compose.test.yml, -p gramps-test), plus a separate, non-blocking smoke
+# test against the public demo.grampsweb.org instance. See docs/testing.md for the tier
+# architecture and CLAUDE.md's Commands section for the -p:RunSettingsFilePath= gotcha this
+# workflow exists to not fall victim to.
+#
+# Never runs unconditionally on pull_request (unlike ci.yml) — the live-stack job needs a real
+# Docker stack and takes minutes, so it's opt-in per PR via the "run-live-tests" label.
+
+on:
+  schedule:
+    # 03:17 UTC, nightly. An arbitrary off-hours slot outside normal US/EU working hours, minutes
+    # offset from :00 to avoid the top-of-hour GitHub Actions scheduler pile-up.
+    - cron: "17 3 * * *"
+  workflow_dispatch: {}
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+jobs:
+  live-stack:
+    name: Live tier (Docker stack)
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'run-live-tests')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Bring up live-test stack
+        run: docker compose -f docker-compose.test.yml -p gramps-test up -d --wait
+
+      - name: Run live tests
+        run: >
+          dotnet test tests/GrampsMcp.LiveTests -c Release -p:RunSettingsFilePath=
+          --filter "Tier=Live"
+          --logger "trx;LogFileName=live-tests.trx"
+
+      # CRITICAL: a mis-filtered run (e.g. a bare --filter "Tier=Live" without clearing
+      # RunSettingsFilePath, or a typo'd trait value) matches zero tests and `dotnet test` still
+      # exits 0 — indistinguishable from a genuine pass by exit code alone. Parse the TRX's own
+      # executed-test count and fail loudly if it's zero or the file is missing, rather than
+      # trusting the exit code.
+      - name: Assert live tests actually ran
+        if: always()
+        run: |
+          trx=$(find . -name 'live-tests.trx' -print -quit)
+          if [ -z "$trx" ]; then
+            echo "::error::No TRX result file found — dotnet test did not run to completion."
+            exit 1
+          fi
+          total=$(grep -o 'total="[0-9]*"' "$trx" | head -n1 | grep -o '[0-9]*')
+          echo "Executed test count (from $trx): ${total:-0}"
+          if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+            echo "::error::Live test run executed 0 tests. This almost always means the Tier=Live filter was ANDed against tests/default.runsettings' Tier!=Live exclusion — see CLAUDE.md's -p:RunSettingsFilePath= note. A 0-test run is a false green, not a pass."
+            exit 1
+          fi
+
+      - name: Capture stack logs on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.test.yml -p gramps-test logs --tail 400
+          echo "--- grampsweb_celery (isolated) ---"
+          docker compose -f docker-compose.test.yml -p gramps-test logs --tail 400 grampsweb_celery
+
+      - name: Tear down live-test stack
+        if: always()
+        run: docker compose -f docker-compose.test.yml -p gramps-test down --volumes
+
+  demo-smoke:
+    name: Demo tier (public demo.grampsweb.org)
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'run-live-tests')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Non-blocking by design: this hits a public, third-party instance we don't control, and its
+    # availability must never gate a PR merge. A failure here is surfaced (visible in the checks
+    # list) but never required.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Run demo smoke tests
+        run: >
+          dotnet test tests/GrampsMcp.LiveTests -c Release -p:RunSettingsFilePath=
+          --filter "Tier=Demo"
+          --logger "trx;LogFileName=demo-tests.trx"
+
+      # Same rationale as live-stack's "Assert live tests actually ran": continue-on-error above
+      # means a genuine test failure here is already swallowed at the job level by design (a
+      # third-party outage must not block a merge) — but a *mis-filtered* run that silently
+      # executes 0 tests would report the same "green" either way, defeating the point of running
+      # this canary at all. Catch that specifically, distinct from an honest failure.
+      - name: Assert demo tests actually ran
+        if: always()
+        run: |
+          trx=$(find . -name 'demo-tests.trx' -print -quit)
+          if [ -z "$trx" ]; then
+            echo "::error::No TRX result file found — dotnet test did not run to completion."
+            exit 1
+          fi
+          total=$(grep -o 'total="[0-9]*"' "$trx" | head -n1 | grep -o '[0-9]*')
+          echo "Executed test count (from $trx): ${total:-0}"
+          if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+            echo "::error::Demo smoke run executed 0 tests. This almost always means the Tier=Demo filter was ANDed against tests/default.runsettings' Tier!=Demo exclusion — see CLAUDE.md's -p:RunSettingsFilePath= note. A 0-test run is a false green, not a pass, and silently defeats this canary's purpose."
+            exit 1
+          fi
