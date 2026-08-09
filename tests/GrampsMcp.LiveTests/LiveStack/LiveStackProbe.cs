@@ -22,13 +22,6 @@ public sealed record LiveStackProbeResult(
 /// </summary>
 internal static class LiveStackProbe
 {
-    // Gramps Web hardcodes a 1 request/second rate limit on POST /api/token/, keyed by source IP.
-    // Every host-originated call to the published port gets NAT'd through the same Docker bridge
-    // gateway IP, so it collides with whatever else (this probe run, a manual curl, a previous
-    // test run) hit the endpoint in the last second. Measured recovery is ~2s; retry with margin.
-    private const int MaxAuthAttempts = 3;
-    private static readonly TimeSpan AuthRetryDelay = TimeSpan.FromMilliseconds(1500);
-
     public static async Task<LiveStackProbeResult> ProbeAsync(
         LiveStackOptions options, HttpClient httpClient, CancellationToken cancellationToken)
     {
@@ -71,10 +64,9 @@ internal static class LiveStackProbe
         }
     }
 
-    private static async Task<string?> TryAuthenticateAsync(
-        LiveStackOptions options, HttpClient httpClient, CancellationToken cancellationToken)
-    {
-        for (var attempt = 1; attempt <= MaxAuthAttempts; attempt++)
+    private static Task<string?> TryAuthenticateAsync(
+        LiveStackOptions options, HttpClient httpClient, CancellationToken cancellationToken) =>
+        RateLimitRetry.RunAsync<string?>(async () =>
         {
             try
             {
@@ -85,33 +77,24 @@ internal static class LiveStackProbe
 
                 if (response.StatusCode == HttpStatusCode.TooManyRequests)
                 {
-                    if (attempt == MaxAuthAttempts)
-                    {
-                        return null;
-                    }
-
-                    await Task.Delay(AuthRetryDelay, cancellationToken);
-                    continue;
+                    return new RateLimitedAttempt<string?>(RateLimitOutcome.RateLimited, null);
                 }
 
                 if (!response.IsSuccessStatusCode)
                 {
                     // A genuine auth failure (bad credentials, etc.) should fail fast rather than
                     // burn through the remaining retries meant for the 429 collision case.
-                    return null;
+                    return new RateLimitedAttempt<string?>(RateLimitOutcome.Failed, null);
                 }
 
                 var payload = await response.Content.ReadFromJsonAsync<GrampsTokenResponse>(cancellationToken);
-                return payload?.AccessToken;
+                return new RateLimitedAttempt<string?>(RateLimitOutcome.Succeeded, payload?.AccessToken);
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
             {
-                return null;
+                return new RateLimitedAttempt<string?>(RateLimitOutcome.Failed, null);
             }
-        }
-
-        return null;
-    }
+        }, cancellationToken);
 
     private static async Task<LiveStackState?> CheckSeedStateAsync(
         string accessToken, HttpClient httpClient, CancellationToken cancellationToken)

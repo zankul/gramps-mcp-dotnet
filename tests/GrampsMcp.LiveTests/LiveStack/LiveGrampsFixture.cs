@@ -17,15 +17,6 @@ namespace GrampsMcp.LiveTests.LiveStack;
 /// </summary>
 public sealed class LiveGrampsFixture : IAsyncLifetime
 {
-    // Same collision as LiveStackProbe's own POST /api/token/ call (see the comment there):
-    // GrampsTokenStore lazily authenticates on its first real request, which — moments after the
-    // probe's own token call — can still land inside Gramps Web's 1 request/second bucket for
-    // POST /api/token/ and come back 429. Forcing that first request here, retried, means the
-    // token gets cached (GrampsTokenStore keeps it for the DI container's lifetime) before any
-    // test body runs, instead of surfacing the 429 as a confusing failure in an unrelated test.
-    private const int MaxWarmUpAttempts = 3;
-    private static readonly TimeSpan WarmUpRetryDelay = TimeSpan.FromMilliseconds(1500);
-
     private ServiceProvider? _serviceProvider;
 
     public LiveStackOptions Options { get; } = LiveStackOptions.FromEnvironment();
@@ -102,38 +93,44 @@ public sealed class LiveGrampsFixture : IAsyncLifetime
     /// <summary>
     /// Forces <see cref="GrampsApiClient"/>'s first real request now, so <c>GrampsTokenStore</c>
     /// authenticates (and caches the token) during fixture setup rather than lazily inside the
-    /// first test body — retried on 429. Any other transient failure (network blip, timeout,
-    /// malformed response) is caught here too, mirroring <see cref="LiveStackProbe.ProbeAsync"/>,
-    /// rather than propagating raw out of <see cref="IAsyncLifetime.InitializeAsync"/> and crashing
-    /// xunit fixture setup for the whole collection.
+    /// first test body — retried on 429 via <see cref="RateLimitRetry"/> (same collision as
+    /// <see cref="LiveStackProbe"/>'s own token call). Any other transient failure (network blip,
+    /// timeout, malformed response) is caught here too, mirroring
+    /// <see cref="LiveStackProbe.ProbeAsync"/>, rather than propagating raw out of
+    /// <see cref="IAsyncLifetime.InitializeAsync"/> and crashing xunit fixture setup for the whole
+    /// collection.
     /// </summary>
     /// <returns><see langword="null"/> on success, otherwise the <see cref="LiveStackState"/> the
     /// fixture should report.</returns>
     private async Task<LiveStackState?> WarmUpTokenAsync()
     {
-        for (var attempt = 1; attempt <= MaxWarmUpAttempts; attempt++)
+        var rateLimitedOnLastAttempt = false;
+
+        var succeeded = await RateLimitRetry.RunAsync<bool?>(async () =>
         {
             try
             {
                 await ApiClient.GetAsync<JsonElement>("/api/metadata/", CancellationToken.None);
-                return null;
+                return new RateLimitedAttempt<bool?>(RateLimitOutcome.Succeeded, true);
             }
             catch (GrampsApiException exception) when (exception.StatusCode == HttpStatusCode.TooManyRequests)
             {
-                if (attempt == MaxWarmUpAttempts)
-                {
-                    return LiveStackState.TokenWarmUpRateLimited;
-                }
-
-                await Task.Delay(WarmUpRetryDelay);
+                rateLimitedOnLastAttempt = true;
+                return new RateLimitedAttempt<bool?>(RateLimitOutcome.RateLimited, null);
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
             {
-                return LiveStackState.StackUnreachable;
+                rateLimitedOnLastAttempt = false;
+                return new RateLimitedAttempt<bool?>(RateLimitOutcome.Failed, null);
             }
+        }, CancellationToken.None);
+
+        if (succeeded == true)
+        {
+            return null;
         }
 
-        return LiveStackState.TokenWarmUpRateLimited;
+        return rateLimitedOnLastAttempt ? LiveStackState.TokenWarmUpRateLimited : LiveStackState.StackUnreachable;
     }
 
     public async Task DisposeAsync()
