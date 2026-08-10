@@ -68,8 +68,10 @@ Three layers, one direction of dependency: **Tools → GrampsApiClient → HttpC
   re-authenticating with the service account; tokens live in memory only and are never logged.
 - `GrampsQueryBuilder` is where the pagination/shaping guardrails actually live (see below) — it's
   the one place that turns a `GrampsListRequest`/`GrampsGetRequest` into query parameters.
-  `/api/search/` gets a different, narrower query builder (`BuildForSearch`) because it rejects
-  the `profile`/`extend`/`keys`/`skipkeys` params the other list endpoints accept.
+  `/api/search/` gets a different, narrower query builder (`BuildForSearch`) because it doesn't
+  honor the `profile`/`extend`/`keys`/`skipkeys` params the other list endpoints accept — measured
+  live for `profile` (`200 OK`, silently ignored, not rejected with an error); `extend`/`keys`/
+  `skipkeys` are assumed to behave the same but that hasn't been individually confirmed.
 - `GrampsErrorTranslator` maps a failed HTTP response to `GrampsApiException`, preferring the
   upstream `error`/`message`/`detail` JSON field but always falling back to the raw body — this is
   deliberate, since GQL 422 errors name the exact parse position and are meant to reach the model
@@ -118,10 +120,13 @@ works in integration tests — don't remove it.
 These come from `docs/PLAN.md`'s "Guardrails (cross-cutting)" section and are backed by measured
 facts about the live Gramps Web API (also in that doc) — not arbitrary defaults:
 
-- **Forced pagination.** `page=0` is the Gramps Web *default* and means "return the whole
-  collection" — a naive list call floods the model's context. `GrampsQueryBuilder` coerces
-  `page < 1` to `1` and clamps `pagesize` to `GrampsOptions.MaxPageSize`. Every list result reports
-  `total`/`page` (`GrampsListResult<T>`) so callers can page deliberately.
+- **Forced pagination.** An **omitted** `page` query key is what makes Gramps Web return the whole
+  collection — a naive list call floods the model's context. (An *explicit* `page=0` is 422-rejected,
+  not treated as unpaginated; and `pagesize` alone, without an explicit `page`, only bounds
+  `/api/search/` — `/api/people/`/GQL ignore it and return everything.) `GrampsQueryBuilder` coerces
+  `page < 1` to `1` and always sends an explicit `page`, so our client never hits either quirk, and
+  clamps `pagesize` to `GrampsOptions.MaxPageSize`. Every list result reports `total`/`page`
+  (`GrampsListResult<T>`) so callers can page deliberately.
 - **Search over GQL.** `/api/search/` is indexed and answers in ~2s; GQL costs 10–15s regardless
   of result size because it scans the whole database upstream. `gramps_search` is the tool a model
   should reach for by default; GQL tools (Phase 4, not yet built) must say so plainly in their

@@ -5,7 +5,9 @@ namespace GrampsMcp.Server.Gramps;
 
 /// <summary>
 /// Owns the pagination and response-shaping guardrails: <c>page</c> is coerced to at least 1
-/// (Gramps Web treats <c>page=0</c> as "unpaginated"), <c>pagesize</c> is capped at
+/// (Gramps Web treats an <c>omitted</c> <c>page</c> key, not an explicit <c>page=0</c> — which is
+/// 422-rejected — as "unpaginated"; and <c>pagesize</c> alone, without an explicit <c>page</c>,
+/// only bounds <c>/api/search/</c>, not <c>/api/people/</c>/GQL), <c>pagesize</c> is capped at
 /// <see cref="GrampsOptions.MaxPageSize"/>, and a default <c>profile</c> is applied so responses
 /// stay context-cheap unless a caller opts out.
 /// </summary>
@@ -28,7 +30,8 @@ internal static class GrampsQueryBuilder
     /// <summary>
     /// Builds query parameters for <c>/api/search/</c> — page/pagesize only, since the search
     /// endpoint only supports <c>type[]</c> and <c>semantic</c> (added separately by the caller)
-    /// and rejects the profile/extend/keys/skipkeys shaping params the other list endpoints accept.
+    /// and doesn't honor the profile/extend/keys/skipkeys shaping params the other list endpoints
+    /// accept (measured live for <c>profile</c>: silently ignored, <c>200 OK</c>, not rejected).
     /// </summary>
     public static List<KeyValuePair<string, string?>> BuildForSearch(GrampsListRequest request, GrampsOptions options) =>
         BuildPagination(request.Page, request.PageSize, options);

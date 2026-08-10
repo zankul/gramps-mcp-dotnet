@@ -17,9 +17,13 @@ public sealed class GrampsTimelineTool(GrampsApiClient apiClient)
         string type,
         [Description("Gramps ID (e.g. 'I0155') or handle of the person or family.")]
         string idOrHandle,
-        [Description("Person only: number of ancestor generations to include (default 1, max 5).")]
+        [Description(
+            "Person only: number of ancestor generations to include (default 1, max 5). " +
+            "0 is rejected by the server; omit this parameter instead of passing 0.")]
         int? ancestors = null,
-        [Description("Person only: number of offspring generations to include (default 1, max 5).")]
+        [Description(
+            "Person only: number of offspring generations to include (default 1, max 5). " +
+            "0 is rejected by the server; omit this parameter instead of passing 0.")]
         int? offspring = null,
         [Description(
             "Event class keywords to include, e.g. 'vital,family'. Options: vital, family, " +
@@ -27,7 +31,10 @@ public sealed class GrampsTimelineTool(GrampsApiClient apiClient)
         IReadOnlyList<string>? eventClasses = null,
         [Description("Specific event type names to include. Birth and death are always included.")]
         IReadOnlyList<string>? events = null,
-        [Description("Date range filter: '-y/m/d' (before), 'y/m/d-' (after), or 'y/m/d-y/m/d' (range).")]
+        [Description(
+            "Date range filter: '-y/m/d' (before), 'y/m/d-' (after), or 'y/m/d-y/m/d' (range). " +
+            "Month/day must NOT be zero-padded (e.g. '1850/1/1-' works, '1850/01/01-' is rejected " +
+            "with a 422).")]
         string? dates = null,
         [Description("Page number, starting at 1.")] int page = 1,
         [Description("Items per page (server-capped).")] int? pagesize = null,
