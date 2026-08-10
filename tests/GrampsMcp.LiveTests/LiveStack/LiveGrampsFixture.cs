@@ -59,6 +59,11 @@ public sealed class LiveGrampsFixture : IAsyncLifetime
         // request and gets a 429 every time, deterministically — not an occasional flake. Letting
         // the window roll over here, once, is cheaper than teaching GrampsTokenStore to accept a
         // pre-fetched token just for this test fixture.
+        //
+        // This delay is a latency optimization, not the correctness guarantee: WarmUpTokenAsync
+        // below retries on 429 via RateLimitRetry regardless, so an under-tuned margin costs an
+        // extra ~1.5s retry round-trip (or reports TokenWarmUpRateLimited if all attempts are
+        // exhausted), not a silent flake. See issue #36.
         await Task.Delay(TimeSpan.FromSeconds(1.1), CancellationToken.None);
 
         var configuration = new ConfigurationBuilder()
@@ -94,8 +99,10 @@ public sealed class LiveGrampsFixture : IAsyncLifetime
     /// Forces <see cref="GrampsApiClient"/>'s first real request now, so <c>GrampsTokenStore</c>
     /// authenticates (and caches the token) during fixture setup rather than lazily inside the
     /// first test body — retried on 429 via <see cref="RateLimitRetry"/> (same collision as
-    /// <see cref="LiveStackProbe"/>'s own token call). Any other transient failure (network blip,
-    /// timeout, malformed response) is caught here too, mirroring
+    /// <see cref="LiveStackProbe"/>'s own token call). This retry is what actually backstops the
+    /// preceding <c>Task.Delay</c>'s rate-limit margin: if that margin ever proves too tight, the
+    /// 429 lands here and gets retried rather than surfacing as a test flake. Any other transient
+    /// failure (network blip, timeout, malformed response) is caught here too, mirroring
     /// <see cref="LiveStackProbe.ProbeAsync"/>, rather than propagating raw out of
     /// <see cref="IAsyncLifetime.InitializeAsync"/> and crashing xunit fixture setup for the whole
     /// collection.
