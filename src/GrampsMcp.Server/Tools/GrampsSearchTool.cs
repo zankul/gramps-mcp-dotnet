@@ -18,7 +18,11 @@ public sealed class GrampsSearchTool(GrampsApiClient apiClient)
         IReadOnlyList<string>? types = null,
         [Description("Page number, starting at 1.")] int page = 1,
         [Description("Results per page (server-capped).")] int? pagesize = null,
-        [Description("Use semantic (vector) search instead of full-text search.")] bool semantic = false,
+        [Description(
+            "Use semantic (vector) search instead of full-text search. Requires the Gramps Web instance to have " +
+            "VECTOR_EMBEDDING_MODEL configured — most instances don't, in which case this errors regardless of " +
+            "query. Leave false unless you know embeddings are configured.")]
+        bool semantic = false,
         CancellationToken cancellationToken = default)
     {
         var request = new GrampsSearchRequest

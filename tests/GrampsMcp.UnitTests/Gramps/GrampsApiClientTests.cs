@@ -158,6 +158,60 @@ public class GrampsApiClientTests
     }
 
     [Fact]
+    public async Task SearchAsync_OnUnconfiguredSemanticSearch503_ThrowsActionableMessage()
+    {
+        var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+        {
+            Content = new StringContent(
+                """{"error": {"code": 503, "message": "VECTOR_EMBEDDING_MODEL option not set"}}"""),
+        });
+        var client = CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => client.SearchAsync(
+                new GrampsSearchRequest { Query = "Sutherland", Semantic = true }, CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, exception.StatusCode);
+        Assert.DoesNotContain("option not set", exception.Message);
+        Assert.Contains("semantic=false", exception.Message);
+    }
+
+    [Fact]
+    public async Task SearchAsync_OnUnrelated503_PassesMessageThroughUnchanged()
+    {
+        var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+        {
+            Content = new StringContent("""{"error": {"code": 503, "message": "database unavailable"}}"""),
+        });
+        var client = CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => client.SearchAsync(
+                new GrampsSearchRequest { Query = "Sutherland", Semantic = true }, CancellationToken.None));
+
+        Assert.Equal("database unavailable", exception.Message);
+    }
+
+    [Fact]
+    public async Task SearchAsync_OnEmbeddingModelMarker503WithoutSemanticRequested_PassesMessageThroughUnchanged()
+    {
+        // Guards against the rewrite firing on a coincidental substring match when the caller
+        // never asked for semantic search in the first place.
+        var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+        {
+            Content = new StringContent(
+                """{"error": {"code": 503, "message": "VECTOR_EMBEDDING_MODEL option not set"}}"""),
+        });
+        var client = CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => client.SearchAsync(
+                new GrampsSearchRequest { Query = "Sutherland", Semantic = false }, CancellationToken.None));
+
+        Assert.Contains("option not set", exception.Message);
+    }
+
+    [Fact]
     public async Task CreateAsync_PostsPayloadAndReturnsResponseBody()
     {
         var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Created)

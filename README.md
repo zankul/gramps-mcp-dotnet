@@ -57,6 +57,12 @@ safe, and cheap in context**. Three measured facts from the Gramps Web API drive
 
 Copy `.env.example` to `.env` to get started.
 
+`gramps_search`'s `semantic` option is a Gramps Web server feature, not an MCP server setting —
+there's no env var above for it. It requires `VECTOR_EMBEDDING_MODEL` to be set on the **Gramps
+Web** instance itself; neither this repo's `docker-compose.yml` nor `docker-compose.test.yml` sets
+it, so semantic search 503s by default. See the
+[Gramps Web docs](https://www.grampsweb.org/) for configuring an embedding model if you want it.
+
 ## Running with Docker
 
 ```bash

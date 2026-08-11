@@ -91,7 +91,14 @@ public sealed class GrampsApiClient(HttpClient httpClient, IOptions<GrampsOption
         return await ReadJsonOrEmptyAsync(response, cancellationToken);
     }
 
-    public Task<GrampsListResult<GrampsSearchHit>> SearchAsync(
+    private const string SemanticSearchUnconfiguredMarker = "VECTOR_EMBEDDING_MODEL";
+
+    private const string SemanticSearchUnconfiguredMessage =
+        "Semantic search is not available: this Gramps Web instance has no VECTOR_EMBEDDING_MODEL " +
+        "configured upstream, so semantic=true always fails here. Retrying will not help — call " +
+        "gramps_search with semantic=false (the default) instead.";
+
+    public async Task<GrampsListResult<GrampsSearchHit>> SearchAsync(
         GrampsSearchRequest request, CancellationToken cancellationToken)
     {
         var query = GrampsQueryBuilder.BuildForSearch(request, options.Value);
@@ -107,7 +114,17 @@ public sealed class GrampsApiClient(HttpClient httpClient, IOptions<GrampsOption
             query.Add(new KeyValuePair<string, string?>("type", string.Join(',', request.Types)));
         }
 
-        return ExecuteListAsync<GrampsSearchHit>("/api/search/", query, cancellationToken);
+        try
+        {
+            return await ExecuteListAsync<GrampsSearchHit>("/api/search/", query, cancellationToken);
+        }
+        catch (GrampsApiException ex) when (
+            request.Semantic &&
+            ex.StatusCode == HttpStatusCode.ServiceUnavailable &&
+            ex.Message.Contains(SemanticSearchUnconfiguredMarker, StringComparison.Ordinal))
+        {
+            throw new GrampsApiException(ex.StatusCode, SemanticSearchUnconfiguredMessage);
+        }
     }
 
     public async Task<T> GetAsync<T>(string path, CancellationToken cancellationToken)

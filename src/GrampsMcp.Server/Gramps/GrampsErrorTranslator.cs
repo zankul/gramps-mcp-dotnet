@@ -5,7 +5,11 @@ namespace GrampsMcp.Server.Gramps;
 /// <summary>
 /// Turns a failed Gramps Web API response into a <see cref="GrampsApiException"/>. Upstream
 /// error text — notably GQL 422 parse errors, which name the exact character and column — is
-/// passed through verbatim rather than replaced with a generic message.
+/// passed through verbatim rather than replaced with a generic message, since the model can
+/// self-correct a malformed query from that detail. Endpoint-specific error rewrites (e.g.
+/// <see cref="GrampsApiClient.SearchAsync"/>'s handling of the unconfigured-semantic-search 503)
+/// belong at the call site, not here — this type has no notion of which endpoint it's translating
+/// for.
 /// </summary>
 internal static class GrampsErrorTranslator
 {
@@ -32,16 +36,10 @@ internal static class GrampsErrorTranslator
         try
         {
             using var document = JsonDocument.Parse(body);
-            if (document.RootElement.ValueKind == JsonValueKind.Object)
+            var extracted = ExtractFromObject(document.RootElement);
+            if (extracted is not null)
             {
-                foreach (var fieldName in ErrorFieldNames)
-                {
-                    if (document.RootElement.TryGetProperty(fieldName, out var value) &&
-                        value.ValueKind == JsonValueKind.String)
-                    {
-                        return value.GetString()!;
-                    }
-                }
+                return extracted;
             }
         }
         catch (JsonException)
@@ -50,5 +48,37 @@ internal static class GrampsErrorTranslator
         }
 
         return body;
+    }
+
+    /// <summary>Looks for a top-level string error field, or Gramps Web's nested
+    /// <c>{"error": {"code": ..., "message": "..."}}</c> shape.</summary>
+    private static string? ExtractFromObject(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        foreach (var fieldName in ErrorFieldNames)
+        {
+            if (!root.TryGetProperty(fieldName, out var value))
+            {
+                continue;
+            }
+
+            if (value.ValueKind == JsonValueKind.String)
+            {
+                return value.GetString();
+            }
+
+            if (value.ValueKind == JsonValueKind.Object &&
+                value.TryGetProperty("message", out var nestedMessage) &&
+                nestedMessage.ValueKind == JsonValueKind.String)
+            {
+                return nestedMessage.GetString();
+            }
+        }
+
+        return null;
     }
 }
