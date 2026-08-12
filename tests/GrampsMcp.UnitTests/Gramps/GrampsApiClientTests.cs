@@ -49,6 +49,43 @@ public class GrampsApiClientTests
     }
 
     [Fact]
+    public async Task CountAsync_ReadsTotalCountFromHeader()
+    {
+        var handler = new TestHttpMessageHandler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""[{"handle":"h1"}]""", Encoding.UTF8, "application/json"),
+            };
+            response.Headers.Add("x-total-count", "4663");
+            return response;
+        });
+        var client = CreateClient(handler);
+
+        var total = await client.CountAsync("/api/people/", "gender == 1", CancellationToken.None);
+
+        Assert.Equal(4663, total);
+    }
+
+    [Fact]
+    public async Task CountAsync_WhenTotalCountHeaderMissing_ThrowsRatherThanReportingPageSize()
+    {
+        // With pagesize=1, an items.Count fallback would always read 1 regardless of the real
+        // match count — a plausible-looking wrong answer. CountAsync must refuse instead.
+        var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""[{"handle":"h1"}]""", Encoding.UTF8, "application/json"),
+        });
+        var client = CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => client.CountAsync("/api/people/", "gender == 1", CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.OK, exception.StatusCode);
+        Assert.Contains("x-total-count", exception.Message);
+    }
+
+    [Fact]
     public async Task GetAsync_ReturnsDeserializedObject()
     {
         var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)

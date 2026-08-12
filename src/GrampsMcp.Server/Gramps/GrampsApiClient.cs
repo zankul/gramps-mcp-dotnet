@@ -24,20 +24,26 @@ public sealed class GrampsApiClient(HttpClient httpClient, IOptions<GrampsOption
     /// <summary>Filters a single object type's collection with a GQL expression, e.g.
     /// <c>/api/people/?gql=child_ref_list.length%20%3E%3D%203</c>.</summary>
     public Task<GrampsListResult<T>> QueryAsync<T>(
-        string path, GrampsGqlRequest request, CancellationToken cancellationToken)
-    {
-        var query = GrampsQueryBuilder.BuildForGql(request, options.Value);
-        query.Add(new KeyValuePair<string, string?>("gql", request.Gql));
-        return ExecuteListAsync<T>(path, query, cancellationToken);
-    }
+        string path, GrampsGqlRequest request, CancellationToken cancellationToken) =>
+        ExecuteListAsync<T>(path, BuildGqlQuery(request), cancellationToken);
 
     /// <summary>Counts objects matching a GQL expression, at the cost of one request with
-    /// <c>pagesize=1</c> (every list response carries <c>x-total-count</c>).</summary>
+    /// <c>pagesize=1</c> (every list response is expected to carry <c>x-total-count</c>). Unlike
+    /// <see cref="ListAsync{T}"/>/<see cref="QueryAsync{T}"/>, this must never fall back to the
+    /// returned item count when the header is missing — with <c>pagesize=1</c> that fallback would
+    /// always be 1 regardless of the real match count, i.e. a plausible-looking wrong answer.</summary>
     public async Task<int> CountAsync(string path, string gql, CancellationToken cancellationToken)
     {
         var request = new GrampsGqlRequest { Gql = gql, PageSize = 1, Keys = ["handle"] };
-        var result = await QueryAsync<JsonElement>(path, request, cancellationToken);
-        return result.Total;
+        var query = BuildGqlQuery(request);
+
+        var (_, total, statusCode, _, _) = await ExecuteRequestAsync<JsonElement>(path, query, cancellationToken);
+        return total ?? throw new GrampsApiException(
+            statusCode,
+            "Gramps API response for this GQL count had no x-total-count header, so the true count " +
+            "cannot be determined — refusing to report the single-row page size as the total. This can " +
+            "happen if a reverse proxy strips the header, or if the upstream Gramps Web version omits " +
+            "it on this endpoint.");
     }
 
     /// <summary>Fetches a paginated log of committed transactions, e.g. <c>/api/transactions/history/</c>.</summary>
@@ -165,7 +171,28 @@ public sealed class GrampsApiClient(HttpClient httpClient, IOptions<GrampsOption
         return items.Count > 0 ? items[0] : default;
     }
 
+    private List<KeyValuePair<string, string?>> BuildGqlQuery(GrampsGqlRequest request)
+    {
+        var query = GrampsQueryBuilder.BuildForGql(request, options.Value);
+        query.Add(new KeyValuePair<string, string?>("gql", request.Gql));
+        return query;
+    }
+
     private async Task<GrampsListResult<T>> ExecuteListAsync<T>(
+        string path, IReadOnlyList<KeyValuePair<string, string?>> query, CancellationToken cancellationToken)
+    {
+        var (items, total, _, page, pageSize) = await ExecuteRequestAsync<T>(path, query, cancellationToken);
+
+        // Falling back to the returned item count when x-total-count is absent is intentional here
+        // (and only here): for a list of returned items, that count is a defensible lower bound on
+        // the true total. CountAsync deliberately does NOT share this fallback — see its own comment.
+        return new GrampsListResult<T>(items, total ?? items.Count, page, pageSize);
+    }
+
+    /// <summary>Issues the shared GET-a-collection request used by every list/query/search/count
+    /// path, returning the raw (possibly absent) total so each caller can decide how to handle a
+    /// missing <c>x-total-count</c> header.</summary>
+    private async Task<(List<T> Items, int? Total, HttpStatusCode StatusCode, int Page, int PageSize)> ExecuteRequestAsync<T>(
         string path, IReadOnlyList<KeyValuePair<string, string?>> query, CancellationToken cancellationToken)
     {
         var url = QueryHelpers.AddQueryString(path, query);
@@ -174,12 +201,12 @@ public sealed class GrampsApiClient(HttpClient httpClient, IOptions<GrampsOption
         await GrampsErrorTranslator.EnsureSuccessAsync(response, cancellationToken);
 
         var items = await response.Content.ReadFromJsonAsync<List<T>>(cancellationToken) ?? [];
-        var total = ReadTotalCount(response, items.Count);
+        var total = ReadTotalCount(response);
         // GrampsQueryBuilder.Build always sets page and pagesize, so these lookups are never null.
         var page = int.Parse(query.First(q => q.Key == "page").Value!, CultureInfo.InvariantCulture);
         var pageSize = int.Parse(query.First(q => q.Key == "pagesize").Value!, CultureInfo.InvariantCulture);
 
-        return new GrampsListResult<T>(items, total, page, pageSize);
+        return (items, total, response.StatusCode, page, pageSize);
     }
 
     private static async Task<JsonElement> ReadJsonOrEmptyAsync(HttpResponseMessage response, CancellationToken cancellationToken)
@@ -208,7 +235,10 @@ public sealed class GrampsApiClient(HttpClient httpClient, IOptions<GrampsOption
         }
     }
 
-    private static int ReadTotalCount(HttpResponseMessage response, int fallback)
+    /// <summary>Returns the parsed <c>x-total-count</c> header, or <see langword="null"/> if it's
+    /// missing or unparsable — callers decide what a missing total means for them (see
+    /// <see cref="ExecuteListAsync{T}"/> vs <see cref="CountAsync"/>).</summary>
+    private static int? ReadTotalCount(HttpResponseMessage response)
     {
         if (response.Headers.TryGetValues("x-total-count", out var values) &&
             int.TryParse(values.FirstOrDefault(), out var total))
@@ -216,6 +246,6 @@ public sealed class GrampsApiClient(HttpClient httpClient, IOptions<GrampsOption
             return total;
         }
 
-        return fallback;
+        return null;
     }
 }
