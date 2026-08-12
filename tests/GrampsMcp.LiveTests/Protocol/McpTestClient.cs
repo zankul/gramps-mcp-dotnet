@@ -21,8 +21,16 @@ internal static class McpTestClient
             Endpoint = new Uri(fixture.Options.McpUrl),
         });
 
-        var client = await McpClient.CreateAsync(transport, cancellationToken: cancellationToken);
-        return new McpClientConnection(client, transport);
+        try
+        {
+            var client = await McpClient.CreateAsync(transport, cancellationToken: cancellationToken);
+            return new McpClientConnection(client, transport);
+        }
+        catch
+        {
+            await transport.DisposeAsync();
+            throw;
+        }
     }
 }
 
