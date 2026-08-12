@@ -38,6 +38,12 @@ public static class GrampsServiceCollectionExtensions
 
         services
             .AddHttpClient<GrampsApiClient>(ConfigureBaseAddress)
+            // HttpClient's own Timeout (default 100s) would otherwise race the resilience
+            // pipeline's TotalRequestTimeout below (120s) and win, throwing a raw
+            // TaskCanceledException that bypasses GrampsToolErrors' Polly-specific handling.
+            // The resilience handler's AttemptTimeout/TotalRequestTimeout are meant to be the
+            // only timeouts governing the request.
+            .ConfigureHttpClient(client => client.Timeout = Timeout.InfiniteTimeSpan)
             .AddHttpMessageHandler<GrampsAuthHandler>()
             .AddStandardResilienceHandler(resilienceOptions =>
             {
@@ -51,6 +57,23 @@ public static class GrampsServiceCollectionExtensions
                     var isIdempotent = method is not null && IdempotentMethods.Contains(method);
                     return ValueTask.FromResult(isIdempotent && HttpClientResiliencePredicates.IsTransient(args.Outcome));
                 };
+
+                // The library defaults (10s attempt / 30s total) are tuned for typical REST calls,
+                // but GQL-backed calls (gramps_query/gramps_count) are measured at 10-15s per call
+                // upstream (docs/PLAN.md) because GQL scans the whole database regardless of result
+                // size. A 10s attempt timeout cuts those off mid-flight, and since GET is retried
+                // (see ShouldHandle above), the aborted attempt then triggers a second full-database
+                // scan, compounding the cost until the 30s total budget also aborts. Give GQL enough
+                // room for one attempt (45s) plus headroom for a retried attempt within the total
+                // budget (120s).
+                resilienceOptions.AttemptTimeout.Timeout = TimeSpan.FromSeconds(45);
+                resilienceOptions.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(120);
+
+                // The standard resilience handler also requires the circuit breaker's sampling
+                // window to be at least double the attempt timeout (so it observes enough attempts
+                // per window to make a meaningful open/close decision); the library default (30s)
+                // no longer satisfies that once AttemptTimeout grows to 45s above.
+                resilienceOptions.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(100);
             });
 
         return services;

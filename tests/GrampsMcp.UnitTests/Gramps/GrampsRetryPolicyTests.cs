@@ -4,6 +4,8 @@ using System.Text.Json;
 using GrampsMcp.Server.Gramps;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Http.Resilience;
+using Microsoft.Extensions.Options;
 
 namespace GrampsMcp.UnitTests.Gramps;
 
@@ -51,6 +53,29 @@ public class GrampsRetryPolicyTests
         }
 
         Assert.True(apiHandler.Requests.Count > 1, $"expected more than one request, got {apiHandler.Requests.Count}");
+    }
+
+    /// <summary>
+    /// Pins the timeouts configured in AddGrampsClient against the library defaults (10s attempt /
+    /// 30s total), which are too short for GQL-backed calls (gramps_query/gramps_count) measured
+    /// at 10-15s per call (docs/PLAN.md) — see issue #57. Resolving the named options here also
+    /// exercises the standard resilience handler's own startup validation (attempt timeout must be
+    /// less than total timeout, and circuit breaker sampling duration must be at least double the
+    /// attempt timeout), so a future edit that violates either constraint fails this test instead
+    /// of failing silently until the app is started.
+    /// </summary>
+    [Fact]
+    public async Task AddGrampsClient_ConfiguresTimeoutsLongEnoughForGql()
+    {
+        var apiHandler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK));
+        await using var provider = BuildProvider(apiHandler);
+
+        var options = provider
+            .GetRequiredService<IOptionsMonitor<HttpStandardResilienceOptions>>()
+            .Get($"{nameof(GrampsApiClient)}-standard");
+
+        Assert.Equal(TimeSpan.FromSeconds(45), options.AttemptTimeout.Timeout);
+        Assert.Equal(TimeSpan.FromSeconds(120), options.TotalRequestTimeout.Timeout);
     }
 
     private static ServiceProvider BuildProvider(HttpMessageHandler apiHandler)
