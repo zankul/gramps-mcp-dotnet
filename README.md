@@ -49,8 +49,8 @@ safe, and cheap in context**. Three measured facts from the Gramps Web API drive
 | `GRAMPS_USERNAME` | _(required)_ | Service account username |
 | `GRAMPS_PASSWORD` | _(required)_ | Service account password |
 | `GRAMPS_ALLOW_WRITES` | `false` | Master switch for all mutating tools |
-| `MCP_TRANSPORT` | `http` | `http` (container) or `stdio` (local/desktop) |
-| `MCP_API_KEY` | _(unset)_ | If set, required on every HTTP request |
+| `MCP_TRANSPORT` | `http` | `http` (shared long-running server, several local clients) or `stdio` (strictly 1:1 with a single client) — see [Connecting a client](#connecting-a-client) |
+| `MCP_ALLOWED_ORIGINS` | `http://localhost:8080,http://127.0.0.1:8080` | Comma-separated Origin allowlist for the `http` transport (DNS-rebinding defense — see [SECURITY.md](SECURITY.md)) |
 | `MCP_LOG_LEVEL` | _(unset)_ | `None`/`Critical`/`Error`/`Warning`/`Information`/`Debug`/`Trace`. Unset preserves current per-transport defaults |
 | `GRAMPS_MAX_PAGESIZE` | `100` | Hard cap on page size |
 | `GRAMPS_DEFAULT_PROFILE` | `self,families,events` | Default readable response shape |
@@ -96,18 +96,24 @@ A pre-built multi-arch image (`linux/amd64`, `linux/arm64`) is published to GHCR
 echo $GITHUB_PAT | docker login ghcr.io -u <your-github-username> --password-stdin
 docker pull ghcr.io/zankul/gramps-mcp-dotnet:latest   # newest release
 # or: :edge for the latest main commit, :sha-<short> for a specific build
-docker run --rm -p 8080:8080 --env-file .env ghcr.io/zankul/gramps-mcp-dotnet:latest
+docker run --rm -p 127.0.0.1:8080:8080 --env-file .env ghcr.io/zankul/gramps-mcp-dotnet:latest
 ```
 
 To build locally instead, `docker build -t gramps-mcp .`.
 
 ## Connecting a client
 
-**Streamable HTTP** (the default transport, `MCP_TRANSPORT=http`) — point your MCP client at
-`http://<host>:8080/`. If `MCP_API_KEY` is set, the client must send it (consult your client's
-docs for how it passes custom headers/auth for HTTP MCP servers).
+**Streamable HTTP** (the default transport, `MCP_TRANSPORT=http`) is a **shared, long-running
+server**: one process, one token store, several local clients can point at it at once, and it
+exposes `/health` for running under Docker Compose or Portainer. It is **unauthenticated by
+design** and bound to loopback only (`docker-compose.yml` publishes `127.0.0.1:8080:8080`); Origin
+validation (`MCP_ALLOWED_ORIGINS`) is the actual defense against DNS rebinding, not a substitute
+for auth. Reaching it from another machine requires putting an authenticating reverse proxy in
+front of it — never expose it directly. See [SECURITY.md](SECURITY.md) for the full posture.
 
-**stdio** (local desktop clients such as Claude Desktop) — run the server with
+**stdio** is **strictly 1:1**: each client spawns its own server process and gets its own token
+store, and there is no network surface at all — none of the loopback/Origin considerations above
+apply. Prefer it for a single desktop client (e.g. Claude Desktop). Run the server with
 `MCP_TRANSPORT=stdio` and point the client at the process directly, e.g. for a `dotnet run`
 checkout:
 

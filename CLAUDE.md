@@ -106,14 +106,22 @@ with the same care as the guardrail logic itself.
 
 ### Program.cs — transport switch
 
-`MCP_TRANSPORT` picks between `WithHttpTransport()` (default, container/remote clients) and
-`WithStdioServerTransport()` (local/desktop clients) at startup — there is no single ASP.NET Core
-pipeline shared between them. **Under stdio, stdout is the MCP protocol channel**, so all logging
-is redirected to stderr (`ClearProviders()` + `AddConsole(LogToStandardErrorThreshold = Trace)`).
-Never write to stdout on the stdio path. The HTTP path also exposes `/health`, which pings
-`/api/metadata/` and reports 503 on any of the known transient-failure exception types.
-`public partial class Program;` at the bottom exists solely so `WebApplicationFactory<Program>`
-works in integration tests — don't remove it.
+`MCP_TRANSPORT` picks between `WithHttpTransport()` and `WithStdioServerTransport()` at startup
+(default `http`) — there is no single ASP.NET Core pipeline shared between them. The real
+distinction isn't "container vs local", it's **shared long-running server vs. strictly 1:1**: HTTP
+is one server instance with one token store that several local clients can share, exposes
+`/health`, and is meant to run long-running under Compose/Portainer — it is also unauthenticated by
+design (see `SECURITY.md`), bound to loopback, and gated by Origin-validation middleware
+(`GrampsMcp.Server.Http.OriginValidationMiddlewareExtensions.UseOriginValidation`, registered ahead
+of `app.MapMcp()`) as the actual defense against DNS rebinding. stdio is strictly 1:1: each client
+spawns its own process and gets its own token store, and there is no network surface at all, which
+is why it's preferred for a single desktop client. **Under stdio, stdout is the MCP protocol
+channel**, so all logging is redirected to stderr (`ClearProviders()` +
+`AddConsole(LogToStandardErrorThreshold = Trace)`). Never write to stdout on the stdio path. The
+HTTP path also exposes `/health`, which pings `/api/metadata/` and reports 503 on any of the known
+transient-failure exception types. `public partial class Program;` at the bottom exists solely so
+`WebApplicationFactory<Program>` works in tests (`tests/GrampsMcp.UnitTests/Http/OriginValidationMiddlewareTests.cs`
+is the first to use it) — don't remove it.
 
 ## Guardrails (read before touching request/response shaping)
 

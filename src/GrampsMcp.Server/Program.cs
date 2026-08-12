@@ -1,6 +1,7 @@
 using System.Text.Json;
 using GrampsMcp.Server.Configuration;
 using GrampsMcp.Server.Gramps;
+using GrampsMcp.Server.Http;
 using GrampsMcp.Server.Tools;
 using ModelContextProtocol.Server;
 
@@ -38,11 +39,30 @@ static async Task RunHttpAsync(string[] args)
 
     ApplyLogLevelOverride(builder.Configuration, builder.Logging);
 
+    builder.Services
+        .AddOptions<OriginValidationOptions>()
+        .Configure<IConfiguration>((options, configuration) =>
+        {
+            var raw = configuration["MCP_ALLOWED_ORIGINS"];
+            if (!string.IsNullOrWhiteSpace(raw))
+            {
+                options.AllowedOrigins = new HashSet<string>(
+                    raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                    StringComparer.OrdinalIgnoreCase);
+            }
+        })
+        .ValidateDataAnnotations()
+        .ValidateOnStart();
+
     builder.Services.AddGrampsClient();
     var toolTypes = await GrampsToolTypeResolver.ResolveAsync(builder.Services, builder.Configuration);
     builder.Services.AddMcpServer().WithHttpTransport().WithTools(toolTypes);
 
     var app = builder.Build();
+
+    // The only defense against DNS rebinding for this loopback-bound, unauthenticated transport
+    // (see SECURITY.md) — must run ahead of MapMcp() so a disallowed Origin never reaches it.
+    app.UseOriginValidation();
 
     app.MapMcp();
 
