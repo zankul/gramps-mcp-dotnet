@@ -35,6 +35,14 @@ public class GrampsServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddGrampsClient_WithMaxPageSizeOverLimit_ThrowsOnResolve()
+    {
+        var settings = new Dictionary<string, string?>(RequiredSettings) { ["GRAMPS_MAX_PAGESIZE"] = "100000" };
+
+        Assert.Throws<OptionsValidationException>(() => Resolve(settings));
+    }
+
+    [Fact]
     public void AddGrampsClient_WithDefaultProfileOverride_BindsTheOverride()
     {
         var settings = new Dictionary<string, string?>(RequiredSettings) { ["GRAMPS_DEFAULT_PROFILE"] = "none" };
@@ -79,6 +87,14 @@ public class GrampsServiceCollectionExtensionsTests
     {
         var settings = new Dictionary<string, string?>(RequiredSettings);
         settings.Remove("GRAMPS_API_URL");
+
+        Assert.Throws<OptionsValidationException>(() => Resolve(settings));
+    }
+
+    [Fact]
+    public void AddGrampsClient_WhenApiUrlIsNotAUrl_ThrowsOnResolve()
+    {
+        var settings = new Dictionary<string, string?>(RequiredSettings) { ["GRAMPS_API_URL"] = "not-a-url" };
 
         Assert.Throws<OptionsValidationException>(() => Resolve(settings));
     }

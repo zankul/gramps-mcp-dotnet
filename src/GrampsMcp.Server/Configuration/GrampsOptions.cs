@@ -14,7 +14,18 @@ public sealed class GrampsOptions : IValidatableObject
     [Required(AllowEmptyStrings = false)]
     public string Password { get; set; } = string.Empty;
 
-    [Range(1, int.MaxValue)]
+    /// <summary>
+    /// Upper bound is deliberately finite, not <see cref="int.MaxValue"/>: this value is both the
+    /// clamp ceiling <see cref="GrampsQueryBuilder"/> enforces on every <c>pagesize</c> and the
+    /// default it falls back to when a caller omits one (<c>GrampsQueryBuilder.cs</c>), so an
+    /// unbounded range would let an operator turn the forced-pagination guardrail into a no-op via
+    /// <c>GRAMPS_MAX_PAGESIZE</c>. 1000 is a round order-of-magnitude above the documented default
+    /// (100) — <c>docs/PLAN.md</c>'s measured API facts don't name a hard upstream ceiling, but do
+    /// note collections in the thousands of rows (e.g. a 4,663-person tree returned whole when
+    /// pagination was bypassed), so this keeps a single page comfortably below "the whole database"
+    /// while still giving operators real headroom over the default.
+    /// </summary>
+    [Range(1, 1000)]
     public int MaxPageSize { get; set; } = 100;
 
     /// <summary>
