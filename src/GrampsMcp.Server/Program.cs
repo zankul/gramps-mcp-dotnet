@@ -66,7 +66,7 @@ static async Task RunHttpAsync(string[] args)
 
     app.MapMcp();
 
-    app.MapGet("/health", async (GrampsApiClient apiClient, CancellationToken cancellationToken) =>
+    app.MapGet("/health", async (GrampsApiClient apiClient, ILogger<Program> logger, CancellationToken cancellationToken) =>
     {
         try
         {
@@ -78,8 +78,14 @@ static async Task RunHttpAsync(string[] args)
             or Polly.Timeout.TimeoutRejectedException
             or Polly.CircuitBreaker.BrokenCircuitException)
         {
+            // The real exception detail (which may embed the raw upstream response body — an
+            // nginx error page, a gunicorn traceback, internal hostnames/ports) is logged
+            // server-side only. The HTTP response gets a fixed, non-revealing string: unlike the
+            // tool-facing GrampsErrorTranslator passthrough (deliberate, for a model consumer),
+            // /health has no business exposing upstream internals to whatever hit this endpoint.
+            Log.HealthCheckFailed(logger, exception);
             return Results.Problem(
-                detail: exception.Message,
+                detail: "Gramps Web could not be reached. See server logs for details.",
                 statusCode: StatusCodes.Status503ServiceUnavailable,
                 title: "Gramps Web is unreachable.");
         }
