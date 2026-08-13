@@ -20,6 +20,9 @@ public class GrampsServiceCollectionExtensionsTests
     {
         var options = Resolve(RequiredSettings);
 
+        Assert.Equal("https://tree.example.com", options.ApiUrl);
+        Assert.Equal("owner", options.Username);
+        Assert.Equal("owner", options.Password);
         Assert.Equal(100, options.MaxPageSize);
         Assert.Equal("self,families,events", options.DefaultProfile);
     }
@@ -50,36 +53,6 @@ public class GrampsServiceCollectionExtensionsTests
         var options = Resolve(settings);
 
         Assert.Equal("none", options.DefaultProfile);
-    }
-
-    [Fact]
-    public void AddGrampsClient_WithApiUrlOverride_BindsTheOverride()
-    {
-        var settings = new Dictionary<string, string?>(RequiredSettings) { ["GRAMPS_API_URL"] = "https://other.example.com" };
-
-        var options = Resolve(settings);
-
-        Assert.Equal("https://other.example.com", options.ApiUrl);
-    }
-
-    [Fact]
-    public void AddGrampsClient_WithUsernameOverride_BindsTheOverride()
-    {
-        var settings = new Dictionary<string, string?>(RequiredSettings) { ["GRAMPS_USERNAME"] = "someone-else" };
-
-        var options = Resolve(settings);
-
-        Assert.Equal("someone-else", options.Username);
-    }
-
-    [Fact]
-    public void AddGrampsClient_WithPasswordOverride_BindsTheOverride()
-    {
-        var settings = new Dictionary<string, string?>(RequiredSettings) { ["GRAMPS_PASSWORD"] = "hunter2" };
-
-        var options = Resolve(settings);
-
-        Assert.Equal("hunter2", options.Password);
     }
 
     [Fact]

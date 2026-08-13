@@ -87,20 +87,6 @@ public class GrampsApiClientTests
     }
 
     [Fact]
-    public async Task GetAsync_ReturnsDeserializedObject()
-    {
-        var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("""{"handle":"h1","gramps_id":"I0001"}""", Encoding.UTF8, "application/json"),
-        });
-        var client = CreateClient(handler);
-
-        var person = await client.GetAsync<TestPerson>("/api/people/I0001", CancellationToken.None);
-
-        Assert.Equal("I0001", person.GrampsId);
-    }
-
-    [Fact]
     public async Task GetAsync_OnErrorStatus_ThrowsGrampsApiException()
     {
         var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)
@@ -125,9 +111,10 @@ public class GrampsApiClientTests
         });
         var client = CreateClient(handler);
 
-        await client.GetAsync<TestPerson>(
+        var person = await client.GetAsync<TestPerson>(
             "/api/people/h1", new GrampsGetRequest { Extend = ["family_list"] }, CancellationToken.None);
 
+        Assert.Equal("I0001", person.GrampsId);
         var query = handler.Requests.Single().RequestUri!.Query;
         Assert.Contains("extend=family_list", query);
         Assert.DoesNotContain("page=", query);

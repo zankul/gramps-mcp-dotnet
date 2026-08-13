@@ -2,7 +2,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
 WORKDIR /src
 
 # Restore on the csproj files alone so this layer survives source-only changes.
-COPY Directory.Build.props ./
+COPY Directory.Build.props Directory.Packages.props ./
 COPY src/GrampsMcp.Server/GrampsMcp.Server.csproj src/GrampsMcp.Server/
 RUN dotnet restore src/GrampsMcp.Server/GrampsMcp.Server.csproj
 
@@ -11,10 +11,8 @@ RUN dotnet publish src/GrampsMcp.Server/GrampsMcp.Server.csproj -c Release -o /a
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS runtime
 WORKDIR /app
-COPY --from=build /app .
-
 # The aspnet-alpine base image already ships a non-root "app" user; reuse it.
-RUN chown -R app:app /app
+COPY --from=build --chown=app:app /app .
 USER app
 
 ENV ASPNETCORE_HTTP_PORTS=8080
