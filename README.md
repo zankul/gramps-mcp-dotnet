@@ -7,16 +7,18 @@ Docker container.
 It is a pure client of the existing [Gramps Web API](https://gramps-project.github.io/gramps-web-api/) —
 no Gramps internals, no direct database access.
 
-> **Status: early development.** See [docs/PLAN.md](docs/PLAN.md) for the phased build plan.
+See [docs/PLAN.md](docs/PLAN.md) for the phased build plan (all phases complete) and the
+appendix of measured Gramps Web API facts the design is built on.
 
 ## Design goals
 
 The hard part of wrapping a 127-endpoint REST API in MCP isn't coverage — it's being **fast,
 safe, and cheap in context**. Three measured facts from the Gramps Web API drive the design:
 
-- **`page=0` is the API default and means _unpaginated_.** A naive list call returns the entire
-  collection. This server forces `page >= 1` and caps `pagesize`, so no single tool call can
-  flood the model's context.
+- **An omitted `page` returns the whole collection, unpaginated.** A naive list call floods the
+  model's context. (An *explicit* `page=0` is 422-rejected, not treated as "unpaginated" — this
+  server always sends an explicit `page`, forced to `>= 1`, and caps `pagesize`, so it never hits
+  either quirk.)
 - **GQL (Gramps Query Language) costs 10–15s per call regardless of result size**, because it
   scans the whole database upstream. The indexed `/api/search/` endpoint answers in ~2s. So
   search is the default path and GQL is an explicitly-labelled advanced escape hatch.
@@ -39,7 +41,13 @@ safe, and cheap in context**. Three measured facts from the Gramps Web API drive
 - **Undoable.** Every write is a transaction Gramps Web tracks; `gramps_history` lists them and
   `gramps_undo` reverses one.
 - **Credentials from environment only** — never logged, never echoed into tool output.
-- **No binary media in context** — media tools return metadata, not file contents.
+- **Fails closed on a broken permission check.** If checking the service account's JWT
+  permissions at startup errors (a transient Gramps outage, an unparseable token), the server
+  doesn't crash — it silently falls back to read-only for that run rather than guessing which
+  write tools are safe to register. A `Warning`-level log line
+  (`GrampsToolTypeResolver`/`Log.WritePermissionCheckFailed`) is the only signal; if you enabled
+  `GRAMPS_ALLOW_WRITES` and don't see write tools registered, check the logs at `Warning` level
+  before assuming they're misconfigured.
 
 ## Configuration
 
@@ -77,9 +85,15 @@ healthcheck.
 
 To exercise write tools locally, use `docker-compose.dev.yml` instead — it also starts a local
 Gramps Web instance (+ Redis/Celery) so `GRAMPS_ALLOW_WRITES=true` never points at anything but a
-disposable local tree. `docker compose -f docker-compose.dev.yml up` is enough on its own; owner
-account setup is automatic. **Never** enable writes against `demo.grampsweb.org` or any other
-shared instance.
+disposable local tree.
+
+```bash
+cp .env.dev.example .env.dev   # gitignored; points gramps-mcp at the local grampsweb container
+docker compose -f docker-compose.dev.yml up
+```
+
+Owner account setup (`owner`/`owner`) is automatic. **Never** enable writes against
+`demo.grampsweb.org` or any other shared instance.
 
 Set `GRAMPS_SEED_EXAMPLE_DATA=true` to have the dev stack import the `example.gramps` demo
 dataset bundled inside the `grampsweb` image (2000+ people, families, and events) instead of
@@ -96,7 +110,7 @@ A pre-built multi-arch image (`linux/amd64`, `linux/arm64`) is published to GHCR
 ```bash
 echo $GITHUB_PAT | docker login ghcr.io -u <your-github-username> --password-stdin
 docker pull ghcr.io/zankul/gramps-mcp-dotnet:latest   # newest release
-# or: :edge for the latest main commit, :sha-<short> for a specific build
+# or: :edge for the latest main commit, :X.Y.Z / :X.Y / :X for a specific released version
 docker run --rm -p 127.0.0.1:8080:8080 --env-file .env ghcr.io/zankul/gramps-mcp-dotnet:latest
 ```
 

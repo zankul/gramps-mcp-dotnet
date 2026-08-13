@@ -5,17 +5,17 @@
 | Tier | Trait | Runs | Needs |
 | --- | --- | --- | --- |
 | Unit | (default, no trait) | Every PR (CI) | Nothing — offline, no Docker |
-| Live | `[Trait("Tier", "Live")]` | Nightly / manual dispatch | `docker-compose.test.yml` stack, see below |
-| Demo | `[Trait("Tier", "Demo")]` | Opt-in (`--filter "Tier=Demo" -p:RunSettingsFilePath=`) | The public `demo.grampsweb.org` |
+| Live | `[Trait("Tier", "Live")]` | Nightly, and on PRs labelled `run-live-tests`; also runnable on manual dispatch | `docker-compose.test.yml` stack, see below |
+| Demo | `[Trait("Tier", "Demo")]` | Opt-in locally (`--filter "Tier=Demo" -p:RunSettingsFilePath=`); also runs nightly in CI as a `continue-on-error` canary | The public `demo.grampsweb.org` |
 
 Live tests exercise real HTTP calls against a real Gramps Web instance seeded with a known dataset
 (the `example.gramps` demo tree bundled in the `grampsweb` image, ~2157 people) — this is where
 `gramps_search`/`gramps_relation`/`gramps_timeline`/write-tool round-trips get checked against
 actual API responses rather than mocked ones. They are not part of the default `dotnet test` run
-(see `CLAUDE.md`'s runsettings note). `tests/GrampsMcp.LiveTests/LiveStack/` holds the skeleton
-(readiness probe, DI-graph fixture, the `LiveStackGate`/`LoopbackGuard` guards) plus one smoke test,
-`Metadata_IsReachable`; contract, protocol, and write-round-trip tests land in later PRs. This file
-documents the stack those tests run against.
+(see `CLAUDE.md`'s runsettings note). `tests/GrampsMcp.LiveTests/LiveStack/` holds the fixture
+scaffolding (readiness probe, DI-graph fixture, the `LiveStackGate`/`LoopbackGuard` guards); the
+suite itself spans `Contract/`, `Protocol/`, and `Writes/`, plus `SeededTreeTests.cs` guarding the
+seeded dataset's fingerprint against drift. This file documents the stack those tests run against.
 
 ## Bringing up the live-test stack
 

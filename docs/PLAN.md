@@ -39,8 +39,8 @@ Each phase is independently shippable and ends in a working state.
 - [x] `git init`, `.gitignore`, `.editorconfig`, MIT `LICENSE`, `README.md`, `.env.example`
 - [x] Private GitHub repo, pushed
 - [x] Install .NET 10 SDK locally
-- [x] `GrampsMcp.sln` with `src/GrampsMcp.Server`, `tests/GrampsMcp.UnitTests`,
-      `tests/GrampsMcp.IntegrationTests`
+- [x] `GrampsMcp.slnx` with `src/GrampsMcp.Server`, `tests/GrampsMcp.UnitTests`,
+      `tests/GrampsMcp.LiveTests`
 - [x] `Directory.Build.props`: `net10.0`, `Nullable=enable`, `TreatWarningsAsErrors=true`,
       `ImplicitUsings=enable`
 - [x] `.github/workflows/ci.yml` — restore, build, test on push and PR
@@ -59,7 +59,8 @@ Each phase is independently shippable and ends in a working state.
 - [x] `GrampsAuthHandler` (`DelegatingHandler`): attach bearer token; on 401 refresh via
       `/api/token/refresh/`; if refresh fails, re-authenticate with the service account. Token
       cached in memory, never logged
-- [x] `GrampsPermissions` — decode the JWT `permissions` claim to learn our real ceiling
+- [x] `GrampsPermissionsProvider` (+ `GrampsJwt`) — decode the JWT `permissions` claim to learn
+      our real ceiling
 - [x] Central request builder owning the **guardrails**: force `page >= 1`, cap `pagesize`,
       apply default `profile`, pass through `keys`/`skipkeys`, read `x-total-count`
 - [x] Error translation: map Gramps 4xx/5xx to clean tool errors, passing GQL 422 messages
@@ -78,9 +79,11 @@ Each phase is independently shippable and ends in a working state.
 
 **Goal:** an agent can connect and explore the tree.
 
-- [x] `Program.cs`: `AddMcpServer().WithHttpTransport().WithToolsFromAssembly()` + `app.MapMcp()`,
-      transport switched by `MCP_TRANSPORT`. Under stdio **all logging goes to stderr** — stdout
-      is the protocol channel
+- [x] `Program.cs`: `AddMcpServer().WithHttpTransport().WithTools(toolTypes)` + `app.MapMcp()`,
+      transport switched by `MCP_TRANSPORT`. `toolTypes` is resolved explicitly
+      (`GrampsToolTypeResolver`), not via assembly scanning — load-bearing, since scanning the
+      whole assembly is exactly what would leak write tools past the registration gate. Under
+      stdio **all logging goes to stderr** — stdout is the protocol channel
 - [x] `gramps_search(query, types[], page, pagesize, semantic)` — indexed, ~instant; *the*
       default way to find anything
 - [x] `gramps_get(type, id_or_handle, extend[], profile)` — accepts Gramps ID (`I0155`) or handle
@@ -156,8 +159,8 @@ deliberately malformed query returns a usable error.
 - [x] `gramps_update(type, handle, patch)` — read-modify-write: GET the full object, apply the
       merge patch, `PUT` it back. Required, because `PUT` **replaces** the whole object
 - [x] `gramps_delete(type, handle)`
-- [x] `gramps_merge(type, keep_handle, discard_handle)`
-- [x] `gramps_history()` / `gramps_undo(transaction_id)` — `/api/transactions/history/{id}/undo`
+- [x] `gramps_merge(type, keep_handle, discard_handle, options)`
+- [x] `gramps_history()` / `gramps_undo(id, force, message)` — `/api/transactions/history/{id}/undo`
 - [x] Startup warning if writes are enabled but the account lacks `AddObject`/`EditObject`
 
 **Testing constraint:** write paths are exercised **only** against a local Gramps Web container.
@@ -194,17 +197,19 @@ anyone with pull access, not a step to rush ahead of local verification.
       `linux/amd64,linux/arm64`
 - [x] Push to `ghcr.io/<owner>/gramps-mcp-dotnet` on every push to `main` and on `vX.Y.Z` release
       tags (not on other branches — that would publish images for unvalidated WIP commits ahead
-      of `ci.yml`, which only runs on `main` pushes and PRs). Tagged with: `sha-<short>` and
-      `edge` on every `main` push (bleeding edge), and semver + `latest` on release tags only —
-      `latest` uses `metadata-action`'s version-aware `flavor=auto`, so a backport release can't
-      drag it backward the way a naive "any release tag" rule would
-- [x] Docker Scout CVE scan runs against an immutable `sha-<short>` staging tag pushed first;
+      of `ci.yml`, which only runs on `main` pushes and PRs). Tagged with: `edge` on every `main`
+      push (bleeding edge), and semver + `latest` on release tags only — `latest` uses
+      `metadata-action`'s version-aware `flavor=auto`, so a backport release can't drag it
+      backward the way a naive "any release tag" rule would. There is no per-commit
+      `sha-<short>` tag: an earlier design had one, and deleting it by name after promotion took
+      the just-promoted `edge` tag down with it, since GHCR deletes a version's tags together
+- [x] Docker Scout CVE scan runs against a reused, immutable-per-run `staging` tag pushed first;
       only if the scan clears (blocking on **critical** findings only; high/medium just surface
       in the job summary) do the mutable `edge`/semver/`latest` tags get promoted (via
       `docker buildx imagetools create`) to point at that digest — so nothing under a tag anyone
       would normally pull skips the gate
-- [x] Gated behind an on/off repo variable (matching the existing `CLAUDE_REVIEW_ENABLED`
-      pattern) so nothing publishes until explicitly enabled
+- [x] Gated behind an on/off repo variable, `DOCKER_PUBLISH_ENABLED`, as a kill switch: publishing
+      runs by default and is skipped only when the variable is explicitly set to `false`
 - [x] README: pull-and-run instructions using the published image, replacing the "build locally"
       note from Phase 6
 
@@ -249,9 +254,12 @@ These are the substance of the project, not decoration. Every phase upholds them
 All measured live against `demo.grampsweb.org` (API 3.19.0, 4,663-person tree). These are
 measurements, not assumptions, and they are why the design looks the way it does.
 
-1. **`page=0` is the default and means _unpaginated_.** `pagesize=2` alone returned all 4,663
-   people; `page=1&pagesize=2` returned 2. Forcing `page >= 1` is the single most important
-   guardrail.
+1. **An omitted `page` returns the whole collection, unpaginated.** `pagesize=2` alone (no `page`)
+   returned all 4,663 people; `page=1&pagesize=2` returned 2. An *explicit* `page=0` is
+   422-rejected outright ("Must be greater than or equal to 1"), not treated as "unpaginated" —
+   confirmed against a live server in
+   `tests/GrampsMcp.LiveTests/Contract/GuardrailPremiseTests.cs`. Always sending an explicit
+   `page`, forced to `>= 1`, is the single most important guardrail.
 2. **GQL costs 10–15s per call regardless of result size** (7 rows → 15.0s; count-only → 10.0s)
    versus **2.0s** for an ordinary paginated fetch. Cause is upstream: `gramps-ql` scans the whole
    database in Python. Not fixable from .NET.
