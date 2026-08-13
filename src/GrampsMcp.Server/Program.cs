@@ -110,5 +110,5 @@ static void ApplyLogLevelOverride(IConfiguration configuration, ILoggingBuilder 
     }
 }
 
-/// <summary>Exposed for <c>WebApplicationFactory&lt;Program&gt;</c> in integration tests.</summary>
+/// <summary>Exposed for <c>WebApplicationFactory&lt;Program&gt;</c> in unit tests.</summary>
 public partial class Program;

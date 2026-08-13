@@ -7,9 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 An MCP (Model Context Protocol) server, in .NET 10, that gives AI agents structured access to a
 [Gramps Web](https://www.grampsweb.org/) genealogy database. It is a pure HTTP client of the
 existing Gramps Web REST API (127 endpoints) — no Gramps internals, no direct database access.
-See `docs/PLAN.md` for the full phased build plan, locked design decisions, and a set of measured
-facts about the upstream API that motivate the guardrails below. `README.md` covers configuration
-and design goals for end users.
+See `docs/PLAN.md` for the full phased build plan (Phases 0–7, all complete), locked design
+decisions, and a set of measured facts about the upstream API that motivate the guardrails below.
+`README.md` covers configuration and design goals for end users.
 
 The project's whole reason to exist is being **fast, safe, and cheap in context** — a naive
 REST-to-MCP wrapper around Gramps Web fails on all three. Any change touching request building,
@@ -31,8 +31,9 @@ local Docker stack; Demo hits the public `demo.grampsweb.org`). `tests/default.r
 `dotnet test` only runs what works offline with no setup. **A CLI `--filter` does not override
 that exclusion — vstest ANDs it with the runsettings filter**, so `dotnet test --filter "Tier=Live"`
 alone silently matches nothing. To opt into a tier, clear the runsettings property first:
-`dotnet test --filter "Tier=Live" -p:RunSettingsFilePath=`. See `docs/testing.md` for the Live
-tier's stack (`docker-compose.test.yml`), measured timings, and the dataset fingerprint.
+`dotnet test --filter "Tier=Live" -p:RunSettingsFilePath=`. See `docs/testing.md` for how to bring
+up the Live tier's stack (`docker compose -f docker-compose.test.yml -p gramps-test up -d --wait`),
+measured timings, and the dataset fingerprint.
 
 CI (`.github/workflows/ci.yml`) runs, on every push/PR: restore → `dotnet format --verify-no-changes`
 → build (Release, warnings-as-errors) → test (excluding Live/Demo, with Cobertura coverage
@@ -58,27 +59,39 @@ Three layers, one direction of dependency: **Tools → GrampsApiClient → HttpC
 
 ### Request pipeline (`src/GrampsMcp.Server/Gramps/`)
 
-- `GrampsApiClient` is a typed `HttpClient` and the only thing tools talk to. It exposes
-  `ListAsync`, `SearchAsync`, `GetAsync` (by handle), and `FindByGrampsIdAsync` (resolves a
-  human-facing Gramps ID like `I0155` via the collection's `gramps_id` filter, since the API has
-  no direct by-ID lookup).
+- `GrampsApiClient` is a typed `HttpClient` and the only thing tools talk to. Reads:
+  `ListAsync`, `ListTimelineAsync`, `QueryAsync` (GQL), `CountAsync`, `ListHistoryAsync`,
+  `SearchAsync`, `GetAsync` (by handle), `FindByGrampsIdAsync` (resolves a human-facing Gramps ID
+  like `I0155` via the collection's `gramps_id` filter, since the API has no direct by-ID lookup).
+  Writes: `CreateAsync`, `ReplaceAsync`, `DeleteAsync`, `PostAsync`, `UndoTransactionAsync`.
 - Every outgoing request passes through `GrampsAuthHandler` (a `DelegatingHandler`), which attaches
   the bearer token, and on 401 buffers+retries the request once after forcing a refresh via
   `GrampsTokenStore`. `GrampsTokenStore` tries the refresh token first, then falls back to
   re-authenticating with the service account; tokens live in memory only and are never logged.
-- `GrampsQueryBuilder` is where the pagination/shaping guardrails actually live (see below) — it's
-  the one place that turns a `GrampsListRequest`/`GrampsGetRequest` into query parameters.
-  `/api/search/` gets a different, narrower query builder (`BuildForSearch`) because it doesn't
-  honor the `profile`/`extend`/`keys`/`skipkeys` params the other list endpoints accept — measured
-  live for `profile` (`200 OK`, silently ignored, not rejected with an error); `extend`/`keys`/
-  `skipkeys` are assumed to behave the same but that hasn't been individually confirmed.
+- `GrampsQueryBuilder` is where the pagination/shaping guardrails actually live (see below) — one
+  builder per endpoint shape, each with its own guardrail rationale: `Build` (list endpoints),
+  `BuildForSearch` (`/api/search/` doesn't honor the `profile`/`extend`/`keys`/`skipkeys` params
+  the other list endpoints accept — measured live for `profile` (`200 OK`, silently ignored, not
+  rejected with an error); `extend`/`keys`/`skipkeys` are assumed to behave the same but that
+  hasn't been individually confirmed), `BuildForGql`, `BuildForGet`, `BuildForIdLookup` (added in
+  #71 to force `page=1&pagesize=1` on the `FindByGrampsIdAsync` collection lookup), `BuildForTimeline`,
+  and `BuildForHistory`.
+- `GrampsHandleResolver` resolves a caller-supplied Gramps ID or handle into a raw handle for
+  endpoints (relations, timelines) that take a handle directly in the URL path — the same
+  ID-vs-handle logic `gramps_get` uses inline (see Tools below), extracted so `gramps_relation`
+  and `gramps_timeline` share one implementation.
+- `GrampsObjectTypes` is the single source of valid type strings: maps the singular names tool
+  callers use (`person`, `family`, ...) to their REST collection path (`/api/people/`, ...).
+- `GrampsJsonMergePatch` applies an RFC 7396 JSON Merge Patch client-side; `gramps_update` needs it
+  because Gramps Web's `PUT` replaces the entire object, so a patch has to be merged onto the full
+  current object before writing it back.
 - `GrampsErrorTranslator` maps a failed HTTP response to `GrampsApiException`, preferring the
   upstream `error`/`message`/`detail` JSON field but always falling back to the raw body — this is
   deliberate, since GQL 422 errors name the exact parse position and are meant to reach the model
   verbatim for self-correction.
 - `GrampsPermissionsProvider` decodes the JWT's `permissions` claim (`GrampsJwt`) so callers can
   check the service account's real ceiling (`AddObject`, `EditObject`, `ViewPrivate`, ...) before
-  attempting a write — this is what Phase 5's write-tool gating will check at registration time.
+  attempting a write — this is what gates write-tool registration (see Write tools below).
 - `GrampsServiceCollectionExtensions.AddGrampsClient()` is the single DI entry point: binds
   `GrampsOptions` from env vars and validates them at startup (fail fast), registers the token
   store, auth handler, and wires `Microsoft.Extensions.Http.Resilience`'s standard resilience
@@ -104,6 +117,21 @@ when adding or editing a tool, the `[Description]` attributes are what steers a 
 `gramps_search` over `gramps_query`, toward correct type strings, etc. Treat wording changes there
 with the same care as the guardrail logic itself.
 
+### Write tools — gated registration
+
+Write tools (`gramps_create`, `gramps_update`, `gramps_delete`, `gramps_merge`, `gramps_history`,
+`gramps_undo`) carry a `[GrampsWriteTool(...requiredPermissions)]` attribute naming the Gramps JWT
+permission(s) they need. `GrampsToolTypeResolver.ResolveAsync` (called from `Program.cs`) excludes
+any type carrying the attribute from the assembly scan — a positive marker on the type, not
+membership in a hand-maintained list, so a write tool always fails closed (stays unregistered)
+rather than leaking through as an ungated read tool. `GrampsWriteTools.All` is discovered by
+reflecting over the same attribute, so it and the read-tool exclusion can't drift apart the way two
+independently maintained lists could. Extending or adding a write tool means only attributing the
+class with `[GrampsWriteTool("SomePermission")]` — nothing else to remember to update. Registration
+then adds back whichever tools `GrampsWriteTools.SelectRegistrable` permits, based on a one-off JWT
+permission check made before the host is built. Never exercise write paths against the public demo
+instance — a local Gramps Web container only (`docker-compose.dev.yml`, see below).
+
 ### Program.cs — transport switch
 
 `MCP_TRANSPORT` picks between `WithHttpTransport()` and `WithStdioServerTransport()` at startup
@@ -117,11 +145,26 @@ of `app.MapMcp()`) as the actual defense against DNS rebinding. stdio is strictl
 spawns its own process and gets its own token store, and there is no network surface at all, which
 is why it's preferred for a single desktop client. **Under stdio, stdout is the MCP protocol
 channel**, so all logging is redirected to stderr (`ClearProviders()` +
-`AddConsole(LogToStandardErrorThreshold = Trace)`). Never write to stdout on the stdio path. The
-HTTP path also exposes `/health`, which pings `/api/metadata/` and reports 503 on any of the known
-transient-failure exception types. `public partial class Program;` at the bottom exists solely so
-`WebApplicationFactory<Program>` works in tests (`tests/GrampsMcp.UnitTests/Http/OriginValidationMiddlewareTests.cs`
-is the first to use it) — don't remove it.
+`AddConsole(LogToStandardErrorThreshold = Trace)`). Never write to stdout on the stdio path.
+`MCP_LOG_LEVEL` (`None`/`Critical`/`Error`/`Warning`/`Information`/`Debug`/`Trace`), applied on top
+of each transport's default, is validated at startup by `GrampsOptions`; unset preserves current
+per-transport behaviour. The HTTP path also exposes `/health`, which pings `/api/metadata/` and
+reports 503 on any of the known transient-failure exception types. `public partial class Program;`
+at the bottom exists solely so `WebApplicationFactory<Program>` works in tests
+(`tests/GrampsMcp.UnitTests/Http/OriginValidationMiddlewareTests.cs` is the first to use it) —
+don't remove it.
+
+### Docker & compose
+
+Three compose files, distinct roles: `docker-compose.yml` runs the server alone against an
+external Gramps Web (`.env`, gitignored, copied from `.env.example`). `docker-compose.dev.yml`
+adds a local Gramps Web instance for exercising write tools (`.env.dev`, gitignored,
+`GRAMPS_ALLOW_WRITES=true`) — never point `GRAMPS_ALLOW_WRITES=true` at anything but this local
+container. `docker-compose.test.yml` is the disposable stack the Live test tier runs against,
+seeded with the bundled `example.gramps` dataset; see `docs/testing.md` for bring-up. Dev and test
+stacks run side by side without port collisions (`8090`/`8080` vs `8091`/`8081`) — `.env` and
+`.env.dev` are easy to conflate since only the filename distinguishes "points at a real tree" from
+"local disposable sandbox".
 
 ## Guardrails (read before touching request/response shaping)
 
@@ -137,33 +180,14 @@ facts about the live Gramps Web API (also in that doc) — not arbitrary default
   (`GrampsListResult<T>`) so callers can page deliberately.
 - **Search over GQL.** `/api/search/` is indexed and answers in ~2s; GQL costs 10–15s regardless
   of result size because it scans the whole database upstream. `gramps_search` is the tool a model
-  should reach for by default; GQL tools (Phase 4, not yet built) must say so plainly in their
+  should reach for by default; `gramps_query`/`gramps_count` (GQL) say so plainly in their
   description and pass 422 parse errors through verbatim.
 - **Default `profile` resolves handles into readable text.** Without it, a person record is opaque
   handles; `GrampsOptions.DefaultProfile` (`self,families,events`) makes responses self-contained
   without follow-up calls. Passing `profile=none` opts out explicitly.
 - **Read-only by default.** `GRAMPS_ALLOW_WRITES` gates whether write tools are *registered at
   all*, not merely whether they error — an unregistered tool can't be planned around by the model.
-  Phase 5 (not yet built) additionally requires the JWT's permission claim to actually grant the
-  right before registering a write tool.
+  The JWT's permission claim additionally has to actually grant the right before a write tool is
+  registered (see Write tools above).
 - **Secrets never logged or echoed.** Tokens live only in `GrampsTokenStore`'s private fields;
   `Log.cs` calls must not include token values, and tool error paths must not leak credentials.
-
-## Notes for future phases
-
-Phase 6 (Docker packaging) is not yet implemented — see `docs/PLAN.md` for its designed shape
-before starting it.
-
-Phase 5 (writes) is implemented but worth knowing the shape of: write tools (`gramps_create`,
-`gramps_update`, `gramps_delete`, `gramps_merge`, `gramps_history`, `gramps_undo`) carry a
-`[GrampsWriteTool(...requiredPermissions)]` attribute naming the Gramps JWT permission(s) they
-need. `Program.cs`'s `ResolveToolTypesAsync` excludes any type carrying the attribute from the
-assembly scan — a positive marker on the type, not membership in a hand-maintained list, so a
-write tool always fails closed (stays unregistered) rather than leaking through as an ungated read
-tool. `GrampsWriteTools.All` is discovered by reflecting over the same attribute, so it and the
-read-tool exclusion can't drift apart the way two independently maintained lists could. Extending
-or adding a write tool means only attributing the class with `[GrampsWriteTool("SomePermission")]`
-— nothing else to remember to update. Registration then adds back whichever tools
-`GrampsWriteTools.SelectRegistrable` permits, based on a one-off JWT permission check made before
-the host is built. Never exercise write paths against the public demo instance — a local Gramps
-Web container only.
