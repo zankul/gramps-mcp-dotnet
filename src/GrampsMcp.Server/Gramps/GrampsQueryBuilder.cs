@@ -43,8 +43,14 @@ internal static class GrampsQueryBuilder
 
     /// <summary>
     /// Builds query parameters for a GQL filter fetch (<c>/api/{type}/?gql=...</c>) — page/pagesize
-    /// and <c>keys</c> only, since GQL accepts no <c>profile</c>/<c>extend</c>/<c>skipkeys</c>/sort
-    /// (see <c>docs/PLAN.md</c> fact #5). The <c>gql</c> parameter itself is added by the caller.
+    /// and <c>keys</c> only. This is a deliberate choice, not an upstream restriction: measured live,
+    /// GQL endpoints actually *honor* <c>profile</c>/<c>extend</c>/<c>skipkeys</c> exactly like the
+    /// plain list endpoints do (adds a resolved <c>profile</c> section, an <c>extended</c> section,
+    /// or drops the named keys respectively — see <c>docs/PLAN.md</c> fact #14). <c>GrampsGqlRequest</c>
+    /// simply doesn't expose those params yet; wiring them up (in particular defaulting
+    /// <c>profile</c> the way <see cref="Build"/> does) is a worthwhile follow-up, since profiled GQL
+    /// results would remove a whole class of follow-up <c>gramps_get</c> calls, but is left undone
+    /// here — see fact #14's note. The <c>gql</c> parameter itself is added by the caller.
     /// </summary>
     public static List<KeyValuePair<string, string?>> BuildForGql(GrampsGqlRequest request, GrampsOptions options)
     {

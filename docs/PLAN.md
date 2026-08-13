@@ -231,9 +231,21 @@ These are the substance of the project, not decoration. Every phase upholds them
 - **Read-only by default** — write tools absent, not merely erroring.
 - **Permission ceiling** — verified at boot from the JWT, failing loudly rather than mid-task.
 - **Response trimming** — `profile` + curated `keys`; no `lds_ord_list`-class noise by default.
-- **Media safety** — metadata only; no binary into context. Any file access is separate,
-  size-limited, MIME-allowlisted and off by default.
-- **Private records** — respect `ViewPrivate`; exclude private records unless configured.
+- **Media safety** — satisfied *vacuously*, not enforced by any guard: no media-file tool exists at
+  all, so nothing in this codebase can return binary content today. Record this as "absent by
+  design," not "enforced," until a media-file tool is actually built — at which point it would need
+  the size-limited, MIME-allowlisted, off-by-default treatment described here.
+- **Private records** — **not enforced by this codebase.** No option, query parameter, or tool
+  argument filters on `private`; the guardrail as originally written ("respect `ViewPrivate`;
+  exclude private records unless configured") describes behavior that was never implemented. What's
+  actually true, measured live (see appendix fact #15): Gramps Web itself does the filtering
+  upstream — a JWT lacking `ViewPrivate` gets a private record silently redacted to `{}` (`200`, not
+  `403`) on a single-object `GET`, and `404` when reached via a collection filter. Our own client
+  passes that upstream behavior through unchanged; the one guard that does exist here is
+  `GrampsUpdateTool` now requiring `ViewPrivate`, so its read-modify-write can't merge a patch onto
+  an upstream-redacted `{}` and write the redaction back permanently. For a single-user deployment
+  where the service account is normally the tree owner (full permissions), this is unlikely to bite
+  in practice — that's a reason to record the answer, not to leave it unknown.
 - **Secrets** — environment only; never logged, never echoed in tool output or errors.
 
 ## Verification strategy
@@ -282,6 +294,36 @@ measurements, not assumptions, and they are why the design looks the way it does
 12. **Writes take the full object.** `PUT /api/{type}/{handle}` replaces. `/api/transactions/` is
     a *raw* endpoint requiring both `old` and `new` full object state — not a patch API.
 13. **Undo exists**: `/api/transactions/history/` and `POST /api/transactions/history/{id}/undo`.
+14. **GQL honors `profile`/`extend`/`skipkeys`** — it does not reject or silently ignore them the
+    way `/api/search/` silently ignores `profile` (fact #10's neighbor finding). Measured live
+    against `docker-compose.test.yml` (2026-08-13): `GET /api/people/?gql=gramps_id="I0001"
+    &profile=self` returned `200 OK` with a resolved `profile` section (`name_display`,
+    `name_given`, birth date/place) identical in shape to the plain list endpoint's profiled
+    response; `&extend=family_list` added an `extended.families` section; `&skipkeys=citation_list,
+    note_list` removed exactly those two keys from the row. This corrects
+    `GrampsQueryBuilder.BuildForGql`'s old comment, which cited fact #5 for a claim fact #5 never
+    made (fact #5 is about GQL's expression language having no `sort`/aggregation/joins, not about
+    endpoint shaping params). `BuildForGql` still doesn't send these params — `GrampsGqlRequest`
+    has no fields for them yet — which is a missed opportunity (a defaulted `profile` would remove
+    a class of follow-up `gramps_get` calls after a GQL search) left as a follow-up rather than
+    fixed here, since wiring it through the request record and tool description is a bigger change
+    than this fact-check warranted.
+15. **A JWT lacking `ViewPrivate` does not get 403'd on a private record — it gets a silently
+    filtered `200`.** Measured live (2026-08-13): marked an existing seeded person (`I0001`)
+    `private: true` as the owner account, then created a `GUEST`-role user (role `0`; the only
+    built-in role whose `PERMISSIONS` set excludes `ViewPrivate` — `MEMBER`/`CONTRIBUTOR`/`EDITOR`/
+    `ADMIN`/`OWNER` all include it). `GET /api/people/{handle}` (no `profile`) as that guest
+    returned `200 {}` — an empty object, not the real record and not an error. The same handle
+    through the collection filter (`/api/people/?gramps_id=I0001`) came back `404` (excluded from
+    the collection entirely). `GET .../{handle}?profile=self` as the guest returned a `500`
+    Internal Server Error instead (an apparent upstream bug when profiling collides with privacy
+    filtering) rather than either a clean redaction or a clean rejection. None of the three
+    responses is a `403`. This confirms the risk flagged in issue #79: `GrampsUpdateTool`'s
+    read-modify-write (`GET` with `Profile = "none"` → merge patch → `PUT` the merged object back)
+    would, run under a `ViewPrivate`-lacking account, read back `{}` for a private target, merge the
+    patch onto nothing, and `PUT` back an object stripped of every field the account couldn't see —
+    permanently destroying data. `GrampsUpdateTool` now requires `ViewPrivate` in its
+    `[GrampsWriteTool(...)]` attribute so it fails closed (unregistered) instead.
 
 ### Reference
 

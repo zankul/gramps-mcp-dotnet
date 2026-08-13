@@ -31,4 +31,18 @@ public class GrampsWriteToolsTests
         Assert.DoesNotContain(typeof(GrampsMergeTool), editOnly);
         Assert.Contains(typeof(GrampsMergeTool), editAndDelete);
     }
+
+    [Fact]
+    public void SelectRegistrable_UpdateRequiresBothEditAndViewPrivatePermission()
+    {
+        // See docs/PLAN.md fact #15: a service account lacking ViewPrivate gets a private record's
+        // GET silently redacted to {} rather than refused, and gramps_update's read-modify-write
+        // would merge-patch onto that redaction and PUT it back, permanently destroying data. This
+        // pins the fail-closed fix for that.
+        var editOnly = GrampsWriteTools.SelectRegistrable(new HashSet<string> { "EditObject" });
+        var editAndViewPrivate = GrampsWriteTools.SelectRegistrable(new HashSet<string> { "EditObject", "ViewPrivate" });
+
+        Assert.DoesNotContain(typeof(GrampsUpdateTool), editOnly);
+        Assert.Contains(typeof(GrampsUpdateTool), editAndViewPrivate);
+    }
 }

@@ -19,8 +19,8 @@ public class ToolsListTests(LiveGrampsFixture fixture)
 {
     // docker-compose.test.yml sets GRAMPS_ALLOW_WRITES: "true" and the seeded owner account (role 4,
     // created by grampsweb_bootstrap) holds every Gramps permission, so GrampsWriteTools.All's
-    // required permissions (AddObject, EditObject, DeleteObject) are all satisfied and every write
-    // tool registers alongside every read tool — 9 read + 6 write = 15. Names below are each tool's
+    // required permissions (AddObject, EditObject, DeleteObject, ViewPrivate) are all satisfied and
+    // every write tool registers alongside every read tool — 9 read + 6 write = 15. Names below are each tool's
     // [McpServerTool(Name = "...")] value, the source of truth in src/GrampsMcp.Server/Tools/*.cs;
     // confirmed by a direct tools/list probe against a running stack before this test was written.
     private static readonly string[] ExpectedToolNames =

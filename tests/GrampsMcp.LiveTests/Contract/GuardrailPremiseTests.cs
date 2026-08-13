@@ -171,6 +171,70 @@ public class GuardrailPremiseTests(LiveGrampsFixture fixture)
         Assert.Contains("char", body, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Pins docs/PLAN.md fact #14: GQL endpoints honor <c>profile</c>, unlike <c>/api/search/</c>
+    /// (see <see cref="ApiClientContractTests.Search_SilentlyIgnoresProfileParameter_RatherThanRejectingIt"/>,
+    /// which silently ignores it). This corrected a stale comment in
+    /// <c>GrampsQueryBuilder.BuildForGql</c> that cited fact #5 for a claim fact #5 never made.
+    /// </summary>
+    [Fact]
+    public async Task Gql_HonorsProfileParameter_AddingResolvedProfileSection()
+    {
+        LiveStackGate.Require(fixture);
+
+        var gql = Uri.EscapeDataString($"gramps_id = \"{ExampleTree.AnchorPersonGrampsId}\"");
+        using var response = await fixture.RawClient.GetAsync(
+            $"/api/people/?gql={gql}&profile=self", CancellationToken.None);
+        response.EnsureSuccessStatusCode();
+
+        var people = await response.Content.ReadFromJsonAsync<JsonElement>(CancellationToken.None);
+
+        Assert.Equal(1, people.GetArrayLength());
+        Assert.True(
+            people[0].TryGetProperty("profile", out var profile),
+            "Expected profile=self on a GQL query to add a resolved 'profile' section, same as the " +
+            "plain list endpoint — GQL does not reject or ignore it.");
+        Assert.True(profile.TryGetProperty("name_display", out _), "Expected profile.name_display to be resolved.");
+    }
+
+    /// <summary>Pins the <c>extend</c> half of fact #14.</summary>
+    [Fact]
+    public async Task Gql_HonorsExtendParameter_AddingExtendedSection()
+    {
+        LiveStackGate.Require(fixture);
+
+        var gql = Uri.EscapeDataString($"gramps_id = \"{ExampleTree.AnchorPersonGrampsId}\"");
+        using var response = await fixture.RawClient.GetAsync(
+            $"/api/people/?gql={gql}&extend=family_list", CancellationToken.None);
+        response.EnsureSuccessStatusCode();
+
+        var people = await response.Content.ReadFromJsonAsync<JsonElement>(CancellationToken.None);
+
+        Assert.Equal(1, people.GetArrayLength());
+        Assert.True(
+            people[0].TryGetProperty("extended", out _),
+            "Expected extend=family_list on a GQL query to add an 'extended' section — GQL does not " +
+            "reject or ignore it.");
+    }
+
+    /// <summary>Pins the <c>skipkeys</c> half of fact #14.</summary>
+    [Fact]
+    public async Task Gql_HonorsSkipkeysParameter_OmittingNamedKeys()
+    {
+        LiveStackGate.Require(fixture);
+
+        var gql = Uri.EscapeDataString($"gramps_id = \"{ExampleTree.AnchorPersonGrampsId}\"");
+        using var response = await fixture.RawClient.GetAsync(
+            $"/api/people/?gql={gql}&skipkeys=citation_list,note_list", CancellationToken.None);
+        response.EnsureSuccessStatusCode();
+
+        var people = await response.Content.ReadFromJsonAsync<JsonElement>(CancellationToken.None);
+
+        Assert.Equal(1, people.GetArrayLength());
+        Assert.False(people[0].TryGetProperty("citation_list", out _), "Expected skipkeys to drop 'citation_list'.");
+        Assert.False(people[0].TryGetProperty("note_list", out _), "Expected skipkeys to drop 'note_list'.");
+    }
+
     private static int? ReadTotalCountHeader(HttpResponseMessage response) =>
         response.Headers.TryGetValues("x-total-count", out var values) &&
         int.TryParse(values.FirstOrDefault(), out var total)

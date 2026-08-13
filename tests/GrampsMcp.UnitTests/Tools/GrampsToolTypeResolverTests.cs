@@ -37,7 +37,7 @@ public class GrampsToolTypeResolverTests
     [Fact]
     public async Task ResolveAsync_WhenWritesEnabledWithFullPermissions_IncludesEveryWriteTool()
     {
-        var tokenStore = CreateTokenStoreWithPermissions("AddObject", "EditObject", "DeleteObject");
+        var tokenStore = CreateTokenStoreWithPermissions("AddObject", "EditObject", "DeleteObject", "ViewPrivate");
         var services = BuildServices(allowWrites: true, tokenStore);
 
         var toolTypes = (await GrampsToolTypeResolver.ResolveAsync(services, BuildConfiguration(allowWrites: true))).ToList();

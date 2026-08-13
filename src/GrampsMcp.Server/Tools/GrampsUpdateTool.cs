@@ -7,9 +7,16 @@ using ModelContextProtocol.Server;
 namespace GrampsMcp.Server.Tools;
 
 /// <summary>WRITE tool — only registered when writes are enabled and the service account has
-/// <c>EditObject</c> permission. See <see cref="GrampsWriteTools"/>.</summary>
+/// <c>EditObject</c> and <c>ViewPrivate</c> permission. See <see cref="GrampsWriteTools"/>.
+/// <c>ViewPrivate</c> is required because this tool's read-modify-write (see
+/// <see cref="UpdateAsync"/>) reads the current object with <c>Profile = "none"</c>, merges the
+/// patch client-side, then PUTs the merged object back whole. Measured live (docs/PLAN.md fact
+/// #15): a service account lacking <c>ViewPrivate</c> gets a private record's <c>GET</c> silently
+/// redacted to <c>{}</c> (<c>200</c>, not <c>403</c>) rather than refused — without this
+/// permission requirement, that redaction would merge-patch onto an empty object and PUT back a
+/// record stripped of every field the account couldn't see, permanently destroying data.</summary>
 [McpServerToolType]
-[GrampsWriteTool("EditObject")]
+[GrampsWriteTool("EditObject", "ViewPrivate")]
 public sealed class GrampsUpdateTool(GrampsApiClient apiClient)
 {
     [McpServerTool(Name = "gramps_update")]
