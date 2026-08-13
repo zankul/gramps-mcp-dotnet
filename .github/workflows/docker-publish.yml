@@ -5,6 +5,17 @@ on:
     branches: [main]
     tags: ["v*.*.*"]
 
+# Serialize runs so the reused "staging" tag can never be repointed by a second push while a
+# first run's scan/promote steps are still relying on it pointing at their own digest (#68).
+# cancel-in-progress stays false: cancelling a run mid-promotion could leave tags half-updated,
+# so overlapping runs queue and run one at a time instead. queue: max keeps every pending run
+# (not just the most recent) — otherwise a third push while one run is already queued would
+# cancel that queued run outright, silently dropping e.g. an intermediate tag release.
+concurrency:
+  group: docker-publish
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   publish:
     # Kill switch: set the repo/org variable DOCKER_PUBLISH_ENABLED to "false" to skip it
