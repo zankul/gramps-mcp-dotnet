@@ -55,6 +55,51 @@ public class GrampsRetryPolicyTests
         Assert.True(apiHandler.Requests.Count > 1, $"expected more than one request, got {apiHandler.Requests.Count}");
     }
 
+    [Fact]
+    public async Task SendAsync_OnTransientFailure_RetriesPut()
+    {
+        // Companion to RetriesGet above: PUT is in IdempotentMethods too (Gramps Web's PUT replaces
+        // the whole object, which is safe to repeat), but nothing previously pinned that — only GET
+        // -retried and POST-not-retried were tested, so dropping PUT from the set would silently
+        // remove transient-fault resilience from gramps_update with no test failing.
+        var apiHandler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        await using var provider = BuildProvider(apiHandler);
+        var apiClient = provider.GetRequiredService<GrampsApiClient>();
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+        try
+        {
+            await apiClient.ReplaceAsync("/api/people/I0001", JsonDocument.Parse("{}").RootElement, cancellation.Token);
+        }
+        catch (Exception exception) when (exception is OperationCanceledException or GrampsApiException)
+        {
+            // Expected: either the bounded cancellation or the pipeline exhausting its own retries.
+        }
+
+        Assert.True(apiHandler.Requests.Count > 1, $"expected more than one request, got {apiHandler.Requests.Count}");
+    }
+
+    [Fact]
+    public async Task SendAsync_OnTransientFailure_RetriesDelete()
+    {
+        // Same guardrail as RetriesPut above, for DELETE (gramps_delete).
+        var apiHandler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        await using var provider = BuildProvider(apiHandler);
+        var apiClient = provider.GetRequiredService<GrampsApiClient>();
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+        try
+        {
+            await apiClient.DeleteAsync("/api/people/I0001", cancellation.Token);
+        }
+        catch (Exception exception) when (exception is OperationCanceledException or GrampsApiException)
+        {
+            // Expected: either the bounded cancellation or the pipeline exhausting its own retries.
+        }
+
+        Assert.True(apiHandler.Requests.Count > 1, $"expected more than one request, got {apiHandler.Requests.Count}");
+    }
+
     /// <summary>
     /// Pins the timeouts configured in AddGrampsClient against the library defaults (10s attempt /
     /// 30s total), which are too short for GQL-backed calls (gramps_query/gramps_count) measured

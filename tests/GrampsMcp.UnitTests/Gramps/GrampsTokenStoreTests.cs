@@ -1,4 +1,5 @@
 using System.Net;
+using GrampsMcp.Server.Configuration;
 using GrampsMcp.Server.Gramps;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -214,6 +215,47 @@ public class GrampsTokenStoreTests
         Assert.NotEmpty(logger.Messages);
         Assert.DoesNotContain(logger.Messages, message => message.Contains(accessToken, StringComparison.Ordinal));
         Assert.DoesNotContain(logger.Messages, message => message.Contains(refreshToken, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Logger_AfterAuthenticateAndFailedRefresh_NeverContainsConfiguredPassword()
+    {
+        // Companion to Logger_AfterAuthenticateAndFailedRefresh_NeverContainsTokenValues above:
+        // that test pins the two tokens never leak, this one pins the third secret GrampsTokenStore
+        // handles — the service-account password from GrampsOptions, which AuthenticateAsync sends
+        // on every call (including the re-authenticate fallback after a rejected refresh) and must
+        // never render into a log message.
+        const string password = "s3cr3t-service-account-password";
+        var tokenCallCount = 0;
+        var handler = new TestHttpMessageHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/token/")
+            {
+                tokenCallCount++;
+                return TestResponses.Json(
+                    HttpStatusCode.OK,
+                    $$"""{"access_token":"token{{tokenCallCount}}","refresh_token":"refresh{{tokenCallCount}}"}""");
+            }
+
+            return path == "/api/token/refresh/"
+                ? TestResponses.Json(HttpStatusCode.Unauthorized, """{"error":"invalid refresh token"}""")
+                : new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        var options = Options.Create(new GrampsOptions
+        {
+            ApiUrl = GrampsTestClientFactory.Options.ApiUrl,
+            Username = "owner",
+            Password = password,
+        });
+        var logger = new RecordingLogger();
+        using var store = new GrampsTokenStore(new FakeHttpClientFactory(handler), options, logger);
+
+        await store.GetAccessTokenAsync(CancellationToken.None);
+        await store.RefreshAsync(CancellationToken.None);
+
+        Assert.NotEmpty(logger.Messages);
+        Assert.DoesNotContain(logger.Messages, message => message.Contains(password, StringComparison.Ordinal));
     }
 
     private static GrampsTokenStore CreateStore(HttpMessageHandler handler, ILogger<GrampsTokenStore>? logger = null) =>

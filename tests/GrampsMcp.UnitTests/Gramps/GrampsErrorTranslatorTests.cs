@@ -72,6 +72,50 @@ public class GrampsErrorTranslatorTests
     }
 
     [Fact]
+    public async Task EnsureSuccessAsync_WhenOnlyMessageFieldPresent_ExtractsMessage()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("""{"message": "from the message field"}"""),
+        };
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => GrampsErrorTranslator.EnsureSuccessAsync(response, CancellationToken.None));
+
+        Assert.Equal("from the message field", exception.Message);
+    }
+
+    [Fact]
+    public async Task EnsureSuccessAsync_WhenOnlyDetailFieldPresent_ExtractsDetail()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("""{"detail": "from the detail field"}"""),
+        };
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => GrampsErrorTranslator.EnsureSuccessAsync(response, CancellationToken.None));
+
+        Assert.Equal("from the detail field", exception.Message);
+    }
+
+    [Fact]
+    public async Task EnsureSuccessAsync_WhenErrorAndMessageBothPresent_PrefersError()
+    {
+        // Pins the field precedence order (error, then message, then detail) declared by
+        // GrampsErrorTranslator.ErrorFieldNames.
+        using var response = new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("""{"error": "from error", "message": "from message"}"""),
+        };
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => GrampsErrorTranslator.EnsureSuccessAsync(response, CancellationToken.None));
+
+        Assert.Equal("from error", exception.Message);
+    }
+
+    [Fact]
     public async Task EnsureSuccessAsync_OnServiceUnavailable_PassesNestedMessageThroughUnrewritten()
     {
         // The semantic-search-specific rewrite lives at the GrampsApiClient.SearchAsync call

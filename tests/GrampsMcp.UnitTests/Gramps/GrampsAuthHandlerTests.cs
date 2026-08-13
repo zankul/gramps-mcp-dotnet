@@ -63,6 +63,33 @@ public class GrampsAuthHandlerTests
     }
 
     [Fact]
+    public async Task SendAsync_OnRepeated401_RetriesOnceThenSurfacesThe401()
+    {
+        // Regression guard for GrampsAuthHandler.SendAsync's early return
+        // (`if (response.StatusCode != HttpStatusCode.Unauthorized) return response;`): if that were
+        // ever changed to a loop, a server with permanently-revoked credentials would make the
+        // handler hammer /api/token/ forever. Stubbing 401 on every call, forever, is what proves
+        // the handler stops after exactly one retry instead of merely proving it retries at least once.
+        var authHandlerBackend = new TestHttpMessageHandler(request =>
+            request.RequestUri!.AbsolutePath switch
+            {
+                "/api/token/" => JsonResponse(HttpStatusCode.OK,
+                    """{"access_token":"token1","refresh_token":"refresh1"}"""),
+                "/api/token/refresh/" => JsonResponse(HttpStatusCode.OK, """{"access_token":"token2"}"""),
+                _ => new HttpResponseMessage(HttpStatusCode.NotFound),
+            });
+        var tokenStore = CreateTokenStore(authHandlerBackend);
+
+        var apiHandler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized));
+        using var client = CreateClient(tokenStore, apiHandler);
+
+        var response = await client.GetAsync("/api/people/I0001");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(2, apiHandler.Requests.Count);
+    }
+
+    [Fact]
     public async Task SendAsync_On401WithRequestBody_RetriesWithBodyAndContentTypeIntact()
     {
         var authHandlerBackend = new TestHttpMessageHandler(request =>
