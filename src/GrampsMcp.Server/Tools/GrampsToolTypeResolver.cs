@@ -1,6 +1,8 @@
+using System.Net.Http.Json;
 using System.Reflection;
+using GrampsMcp.Server.Configuration;
 using GrampsMcp.Server.Gramps;
-using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
 
 namespace GrampsMcp.Server.Tools;
@@ -25,7 +27,17 @@ namespace GrampsMcp.Server.Tools;
 /// </remarks>
 internal static class GrampsToolTypeResolver
 {
-    public static async Task<IEnumerable<Type>> ResolveAsync(IServiceCollection services, IConfiguration configuration)
+    public static Task<IEnumerable<Type>> ResolveAsync(IServiceCollection services, IConfiguration configuration) =>
+        ResolveAsync(services, configuration, authHandler: null);
+
+    /// <param name="authHandler">
+    /// Test seam only: substitutes the transport <see cref="CheckPermissionsAsync"/>'s throwaway
+    /// <see cref="HttpClient"/> sends through, so tests can stub the startup permission check
+    /// without a real network call. Production callers always use the parameterless overload
+    /// above, which leaves this <see langword="null"/> (the client's real <c>SocketsHttpHandler</c>).
+    /// </param>
+    internal static async Task<IEnumerable<Type>> ResolveAsync(
+        IServiceCollection services, IConfiguration configuration, HttpMessageHandler? authHandler)
     {
         // Excluded by the [GrampsWriteTool] marker attribute, not by membership in GrampsWriteTools.All:
         // a write tool that is forgotten from that list must still fail closed (stay unregistered), not
@@ -44,23 +56,28 @@ internal static class GrampsToolTypeResolver
         // warns about — it runs once before the real host is built, to learn the service account's
         // real JWT permission ceiling before deciding which write tools to register.
         //
-        // The provider is deliberately left undisposed on the success path below: it owns the
-        // GrampsTokenStore singleton that just authenticated with Gramps Web, and disposing the
-        // provider here would tear that instance (and its semaphore) down before the real host gets a
-        // chance to reuse it. Instead, the already-authenticated instance is swapped into `services`
-        // so the real host's provider resolves the SAME GrampsTokenStore rather than constructing a
-        // fresh one and authenticating a second time from scratch.
+        // Deliberately used ONLY to resolve already-validated GrampsOptions and a logger — never
+        // GrampsTokenStore or IHttpClientFactory. Resolving either of those here would force this
+        // throwaway container to build real HTTP infrastructure that then has to either be
+        // disposed (tearing down a token store the real host might still be using) or leaked for
+        // the life of the process (the bug this fixed: see #84). The permission check below
+        // instead talks to Gramps Web with its own one-off HttpClient built straight from the
+        // validated options, so this provider can always be disposed right after use.
 #pragma warning disable ASP0000
-        var provider = services.BuildServiceProvider();
+        await using var provider = services.BuildServiceProvider();
 #pragma warning restore ASP0000
 
+        var options = provider.GetRequiredService<IOptions<GrampsOptions>>().Value;
         var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(GrampsToolTypeResolver).FullName!);
 
         try
         {
-            var tokenStore = provider.GetRequiredService<GrampsTokenStore>();
-            var permissions = await provider.GetRequiredService<GrampsPermissionsProvider>()
-                .GetPermissionsAsync(CancellationToken.None);
+            var (permissions, tokens) = await CheckPermissionsAsync(options, authHandler, CancellationToken.None);
+
+            // Seeds the real host's GrampsTokenStore (registered later, in Program.cs, once this
+            // method returns) with the token pair already obtained above, so it starts
+            // pre-authenticated instead of logging in a second time on its first real request.
+            services.AddSingleton(new GrampsTokenSeed(tokens.AccessToken, tokens.RefreshToken));
 
             var missingPermissions = GrampsWriteTools.All
                 .SelectMany(tool => tool.RequiredPermissions)
@@ -73,8 +90,6 @@ internal static class GrampsToolTypeResolver
                 Log.WritePermissionsIncomplete(logger, string.Join(", ", missingPermissions));
             }
 
-            services.Replace(ServiceDescriptor.Singleton(tokenStore));
-
             return [.. readToolTypes, .. GrampsWriteTools.SelectRegistrable(permissions)];
         }
         catch (Exception exception) when (exception is GrampsApiException
@@ -82,15 +97,44 @@ internal static class GrampsToolTypeResolver
             or Polly.Timeout.TimeoutRejectedException
             or Polly.CircuitBreaker.BrokenCircuitException
             or FormatException
-            or System.Text.Json.JsonException)
+            or System.Text.Json.JsonException
+            or OperationCanceledException)
         {
-            // A transient Gramps outage, or a JWT that doesn't decode as expected (FormatException from
-            // GrampsJwt's base64/segment check, JsonException from its payload parse), at startup must
-            // not prevent the server from coming up at all — fall back to read-only tools for this run
+            // A transient Gramps outage, an unreachable host (OperationCanceledException from the
+            // HttpClient timeout below — there is no resilience pipeline on this one-off client to
+            // translate it into TimeoutRejectedException the way the typed GrampsApiClient would),
+            // or a JWT that doesn't decode as expected (FormatException from GrampsJwt's
+            // base64/segment check, JsonException from its payload parse), at startup must not
+            // prevent the server from coming up at all — fall back to read-only tools for this run
             // rather than crashing the process.
             Log.WritePermissionCheckFailed(logger, exception);
-            await provider.DisposeAsync();
             return readToolTypes;
         }
+    }
+
+    /// <summary>
+    /// Authenticates once with a throwaway <see cref="HttpClient"/> (deliberately not routed
+    /// through <see cref="GrampsTokenStore"/> or DI's <c>IHttpClientFactory</c> — see the comment
+    /// in <see cref="ResolveAsync"/>) and reads the JWT's <c>permissions</c> claim. The client gets
+    /// the same explicit timeout as the real <c>GrampsAuth</c> named client, since it likewise has
+    /// no resilience handler to bound an unreachable host's hang. Also returns the token pair
+    /// obtained along the way, so <see cref="ResolveAsync"/> can seed the real
+    /// <see cref="GrampsTokenStore"/> and avoid a second, redundant login moments later.
+    /// </summary>
+    private static async Task<(IReadOnlySet<string> Permissions, GrampsTokenResponse Tokens)> CheckPermissionsAsync(
+        GrampsOptions options, HttpMessageHandler? authHandler, CancellationToken cancellationToken)
+    {
+        using var client = authHandler is null ? new HttpClient() : new HttpClient(authHandler, disposeHandler: false);
+        client.BaseAddress = new Uri(GrampsServiceCollectionExtensions.NormalizeBaseAddress(options.ApiUrl));
+        client.Timeout = TimeSpan.FromSeconds(10);
+
+        using var response = await client.PostAsJsonAsync(
+            "api/token/", new { username = options.Username, password = options.Password }, cancellationToken);
+        await GrampsErrorTranslator.EnsureSuccessAsync(response, cancellationToken);
+
+        var payload = await response.Content.ReadFromJsonAsync<GrampsTokenResponse>(cancellationToken)
+            ?? throw new GrampsApiException(response.StatusCode, "Gramps token endpoint returned an empty body.");
+
+        return (GrampsJwt.ReadPermissions(payload.AccessToken), payload);
     }
 }

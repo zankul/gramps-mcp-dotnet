@@ -32,7 +32,15 @@ public static class GrampsServiceCollectionExtensions
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
-        services.AddHttpClient(GrampsTokenStore.AuthClientName, ConfigureBaseAddress);
+        services
+            .AddHttpClient(GrampsTokenStore.AuthClientName, ConfigureBaseAddress)
+            // This client has no resilience handler (only the typed GrampsApiClient below gets
+            // AddStandardResilienceHandler), so without an explicit Timeout an unreachable host
+            // hangs for HttpClient's 100s default. That's long enough to make the startup
+            // permission probe in GrampsToolTypeResolver look like it hung the process instead of
+            // degrading to read-only tools as documented. 10s is generous for a token endpoint on
+            // a reachable host and short enough that a dead host fails fast.
+            .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromSeconds(10));
         services.AddSingleton<GrampsTokenStore>();
         services.AddSingleton<GrampsPermissionsProvider>();
         services.AddTransient<GrampsAuthHandler>();
@@ -83,6 +91,17 @@ public static class GrampsServiceCollectionExtensions
     private static void ConfigureBaseAddress(IServiceProvider serviceProvider, HttpClient client)
     {
         var options = serviceProvider.GetRequiredService<IOptions<GrampsOptions>>().Value;
-        client.BaseAddress = new Uri(options.ApiUrl);
+        client.BaseAddress = new Uri(NormalizeBaseAddress(options.ApiUrl));
     }
+
+    /// <summary>
+    /// Ensures the configured API URL ends in a trailing slash. <see cref="GrampsApiClient"/> and
+    /// <see cref="GrampsTokenStore"/> both build request URIs as paths relative to
+    /// <c>HttpClient.BaseAddress</c> (e.g. "api/people/"), and per <see cref="Uri"/> combination
+    /// rules that only appends correctly onto a base ending in "/" — a sub-path base URL missing
+    /// the trailing slash (e.g. "https://example.com/gramps") would otherwise silently drop its
+    /// last path segment ("/gramps") when combined with a relative request path.
+    /// </summary>
+    internal static string NormalizeBaseAddress(string apiUrl) =>
+        apiUrl.EndsWith('/') ? apiUrl : apiUrl + "/";
 }

@@ -23,7 +23,10 @@ public sealed class GrampsAuthHandler(GrampsTokenStore tokenStore) : DelegatingH
         }
 
         response.Dispose();
-        var refreshedToken = await tokenStore.RefreshAsync(cancellationToken);
+        // Passing the token this call actually saw lets RefreshAsync short-circuit if another
+        // concurrent 401 already triggered a refresh while this caller was waiting on the lock,
+        // instead of every caller re-refreshing serially (see GrampsTokenStore.RefreshAsync).
+        var refreshedToken = await tokenStore.RefreshAsync(accessToken, cancellationToken);
         var retryRequest = await CloneRequestAsync(bufferedRequest, refreshedToken, cancellationToken);
         return await base.SendAsync(retryRequest, cancellationToken);
     }

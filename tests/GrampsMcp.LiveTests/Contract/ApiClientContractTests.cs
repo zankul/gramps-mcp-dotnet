@@ -191,8 +191,11 @@ public class ApiClientContractTests(LiveGrampsFixture fixture)
         Assert.NotEmpty(result.Items);
         foreach (var hit in result.Items)
         {
-            Assert.False(double.IsNaN(hit.Rank));
-            Assert.False(double.IsNaN(hit.Score));
+            // Rank/Score are nullable (see GrampsSearchHit, #84) because the live API is known to
+            // return a null score for some hits; this test's name asserts the common case
+            // (non-null) still comes through correctly typed when the field IS present.
+            Assert.False(hit.Rank is double.NaN);
+            Assert.False(hit.Score is double.NaN);
             Assert.False(string.IsNullOrEmpty(hit.Handle));
             Assert.False(string.IsNullOrEmpty(hit.ObjectType));
         }

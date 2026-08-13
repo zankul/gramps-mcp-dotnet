@@ -192,6 +192,34 @@ public class GrampsApiClientTests
     }
 
     [Fact]
+    public async Task SearchAsync_WithNullScoreAndRank_DeserializesToNullInsteadOfThrowing()
+    {
+        // Regression guard for #84 finding 5b: /api/search/ is known to return "score": null for
+        // an otherwise-legitimate hit. Before GrampsSearchHit.Rank/Score were made nullable,
+        // deserializing that into a non-nullable double threw a JsonException that
+        // GrampsToolErrors doesn't translate, so the model would see the MCP SDK's generic error
+        // instead of the search result.
+        var handler = new TestHttpMessageHandler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """[{"handle":"h1","object_type":"person","object":{},"rank":null,"score":null}]""",
+                    Encoding.UTF8, "application/json"),
+            };
+            response.Headers.Add("x-total-count", "1");
+            return response;
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.SearchAsync(new GrampsSearchRequest { Query = "Sutherland" }, CancellationToken.None);
+
+        var hit = Assert.Single(result.Items);
+        Assert.Null(hit.Rank);
+        Assert.Null(hit.Score);
+    }
+
+    [Fact]
     public async Task SearchAsync_WhenPageSizeOmitted_DefaultsToSearchDefaultNotMaxPageSize()
     {
         var handler = new TestHttpMessageHandler(_ =>

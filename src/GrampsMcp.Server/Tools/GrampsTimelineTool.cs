@@ -52,7 +52,7 @@ public sealed class GrampsTimelineTool(GrampsApiClient apiClient)
 
             var isPerson = string.Equals(type, "person", StringComparison.OrdinalIgnoreCase);
             var handle = await GrampsHandleResolver.ResolveAsync(apiClient, type, idOrHandle, cancellationToken);
-            var path = isPerson ? $"/api/people/{handle}/timeline" : $"/api/families/{handle}/timeline";
+            var path = isPerson ? $"api/people/{handle}/timeline" : $"api/families/{handle}/timeline";
 
             var request = new GrampsTimelineRequest
             {

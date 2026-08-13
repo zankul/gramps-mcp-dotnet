@@ -16,7 +16,7 @@ public sealed class GrampsTreeSummaryTool(GrampsApiClient apiClient)
         CancellationToken cancellationToken = default)
     {
         var query = new Dictionary<string, string?> { ["surnames"] = includeSurnames ? "true" : "false" };
-        var path = QueryHelpers.AddQueryString("/api/metadata/", query);
+        var path = QueryHelpers.AddQueryString("api/metadata/", query);
         return await GrampsToolErrors.TranslateAsync(() => apiClient.GetAsync<JsonElement>(path, cancellationToken));
     }
 }

@@ -21,9 +21,25 @@ internal static class GrampsHandleResolver
         {
             var found = await apiClient.FindByGrampsIdAsync<JsonElement>(
                 collectionPath, idOrHandle, HandleOnlyRequest, cancellationToken);
-            return found.ValueKind != JsonValueKind.Undefined
-                ? found.GetProperty("handle").GetString()!
-                : throw new GrampsApiException(HttpStatusCode.NotFound, $"No {type} found with Gramps ID '{idOrHandle}'.");
+
+            if (found.ValueKind == JsonValueKind.Undefined)
+            {
+                throw new GrampsApiException(HttpStatusCode.NotFound, $"No {type} found with Gramps ID '{idOrHandle}'.");
+            }
+
+            // Keys = ["handle"] on HandleOnlyRequest asks Gramps Web to trim the response to just
+            // this field, but that's a hint some upstream versions may not honor — TryGetProperty
+            // (rather than an unchecked GetProperty(...)!) turns a missing field into a real
+            // GrampsApiException instead of an untranslated KeyNotFoundException reaching the
+            // model as the MCP SDK's generic error message.
+            if (!found.TryGetProperty("handle", out var handleProperty) || handleProperty.GetString() is not { } handle)
+            {
+                throw new GrampsApiException(
+                    HttpStatusCode.InternalServerError,
+                    $"Gramps API's lookup for {type} '{idOrHandle}' returned an object with no 'handle' field.");
+            }
+
+            return handle;
         }
 
         if (!GrampsIdentifiers.IsValidHandle(idOrHandle))

@@ -81,7 +81,9 @@ Three layers, one direction of dependency: **Tools → GrampsApiClient → HttpC
   ID-vs-handle logic `gramps_get` uses inline (see Tools below), extracted so `gramps_relation`
   and `gramps_timeline` share one implementation.
 - `GrampsObjectTypes` is the single source of valid type strings: maps the singular names tool
-  callers use (`person`, `family`, ...) to their REST collection path (`/api/people/`, ...).
+  callers use (`person`, `family`, ...) to their REST collection path (`api/people/`, ...) — a
+  path relative to `HttpClient.BaseAddress`, not absolute-rooted, so a sub-path deployment behind
+  a proxy composes correctly instead of resolving path-absolute and discarding the sub-path (#84).
 - `GrampsJsonMergePatch` applies an RFC 7396 JSON Merge Patch client-side; `gramps_update` needs it
   because Gramps Web's `PUT` replaces the entire object, so a patch has to be merged onto the full
   current object before writing it back.

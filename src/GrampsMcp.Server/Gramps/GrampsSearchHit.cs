@@ -14,9 +14,17 @@ namespace GrampsMcp.Server.Gramps;
 /// <see cref="GrampsOptions.SearchDefaultPageSize"/> — a small default hit count rather than a
 /// per-hit trim.
 /// </summary>
+/// <remarks>
+/// <see cref="Rank"/> and <see cref="Score"/> are nullable, not <c>double</c>: <c>/api/search/</c>
+/// is known to return <c>"score": null</c> for otherwise-legitimate hits (see #84), and
+/// <c>GrampsToolErrors</c> does not translate
+/// <see cref="JsonException"/> — a non-nullable <c>double</c> deserializing a JSON <c>null</c>
+/// would throw one, which the model would then see as the MCP SDK's generic, useless error
+/// message instead of any real search result.
+/// </remarks>
 public sealed record GrampsSearchHit(
     string Handle,
     [property: JsonPropertyName("object_type")] string ObjectType,
     [property: JsonPropertyName("object")] JsonElement Data,
-    double Rank,
-    double Score);
+    double? Rank,
+    double? Score);

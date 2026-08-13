@@ -175,6 +175,61 @@ public class GrampsTokenStoreTests
     }
 
     [Fact]
+    public async Task RefreshAsync_TenConcurrentCallersWithSameStaleToken_ResultInExactlyOneRefreshPost()
+    {
+        // Regression guard for #84 finding 3 (the refresh stampede): when N concurrent callers all
+        // see the same stale access token in a 401, the naive fix is for every one of them to
+        // queue on the lock and then unconditionally refresh in turn — N serial refresh round
+        // trips for one expiry. Passing the stale token each caller saw lets every caller but the
+        // one that actually wins the race find, once it gets the lock, that _accessToken has
+        // already moved on — so it reuses that result instead of refreshing again.
+        var refreshCallCount = 0;
+        var gate = new TaskCompletionSource();
+        var handler = new TestHttpMessageHandler(async (request, _) =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/api/token/")
+            {
+                return TestResponses.Json(HttpStatusCode.OK, """{"access_token":"token1","refresh_token":"refresh1"}""");
+            }
+
+            Interlocked.Increment(ref refreshCallCount);
+            await gate.Task;
+            return TestResponses.Json(HttpStatusCode.OK, """{"access_token":"token2"}""");
+        });
+        using var store = CreateStore(handler);
+        var staleToken = await store.GetAccessTokenAsync(CancellationToken.None);
+
+        var callers = Enumerable.Range(0, 10)
+            .Select(_ => store.RefreshAsync(staleToken, CancellationToken.None))
+            .ToArray();
+        gate.SetResult();
+        var tokens = await Task.WhenAll(callers);
+
+        Assert.All(tokens, token => Assert.Equal("token2", token));
+        Assert.Equal(1, refreshCallCount);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_WhenExpectedStaleTokenAlreadyChanged_ReturnsCurrentTokenWithoutRefreshing()
+    {
+        // Simpler, non-concurrent companion to the stampede test above: a caller that shows up
+        // with a stale token that no longer matches the current one (someone else already
+        // refreshed) must get the current token back without issuing any HTTP call at all.
+        var handler = new TestHttpMessageHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/token/" => TestResponses.Json(HttpStatusCode.OK, """{"access_token":"token1","refresh_token":"refresh1"}"""),
+            "/api/token/refresh/" => throw new InvalidOperationException("should not be called"),
+            _ => new HttpResponseMessage(HttpStatusCode.NotFound),
+        });
+        using var store = CreateStore(handler);
+        await store.GetAccessTokenAsync(CancellationToken.None);
+
+        var result = await store.RefreshAsync("a-token-nobody-currently-holds", CancellationToken.None);
+
+        Assert.Equal("token1", result);
+    }
+
+    [Fact]
     public async Task GetAccessTokenAsync_WhenTokenResponseBodyIsEmpty_ThrowsGrampsApiException()
     {
         var handler = new TestHttpMessageHandler(_ => TestResponses.Json(HttpStatusCode.OK, "null"));

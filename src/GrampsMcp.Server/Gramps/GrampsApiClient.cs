@@ -49,7 +49,7 @@ public sealed class GrampsApiClient(HttpClient httpClient, IOptions<GrampsOption
     /// <summary>Fetches a paginated log of committed transactions, e.g. <c>/api/transactions/history/</c>.</summary>
     public Task<GrampsListResult<T>> ListHistoryAsync<T>(
         GrampsHistoryRequest request, CancellationToken cancellationToken) =>
-        ExecuteListAsync<T>("/api/transactions/history/", GrampsQueryBuilder.BuildForHistory(request, options.Value), cancellationToken);
+        ExecuteListAsync<T>("api/transactions/history/", GrampsQueryBuilder.BuildForHistory(request, options.Value), cancellationToken);
 
     /// <summary>Creates a new object, e.g. <c>POST /api/people/</c>. Returns whatever body Gramps sends back
     /// (a list of change records), or an empty <see cref="JsonElement"/> if the response has no content.
@@ -91,7 +91,7 @@ public sealed class GrampsApiClient(HttpClient httpClient, IOptions<GrampsOption
             query.Add(new KeyValuePair<string, string?>("message", message));
         }
 
-        var url = QueryHelpers.AddQueryString($"/api/transactions/history/{transactionId}/undo", query);
+        var url = QueryHelpers.AddQueryString($"api/transactions/history/{transactionId}/undo", query);
         using var response = await httpClient.PostAsync(url, content: null, cancellationToken);
         await GrampsErrorTranslator.EnsureSuccessAsync(response, cancellationToken);
         return await ReadJsonOrEmptyAsync(response, cancellationToken);
@@ -122,7 +122,7 @@ public sealed class GrampsApiClient(HttpClient httpClient, IOptions<GrampsOption
 
         try
         {
-            return await ExecuteListAsync<GrampsSearchHit>("/api/search/", query, cancellationToken);
+            return await ExecuteListAsync<GrampsSearchHit>("api/search/", query, cancellationToken);
         }
         catch (GrampsApiException ex) when (
             request.Semantic &&

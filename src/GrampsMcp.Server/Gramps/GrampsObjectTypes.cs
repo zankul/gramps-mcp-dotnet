@@ -1,8 +1,8 @@
 namespace GrampsMcp.Server.Gramps;
 
 /// <summary>
-/// Maps the singular object type names used by tool callers and <c>/api/search/</c> (e.g.
-/// "person") to their REST collection path (e.g. "/api/people/").
+/// Maps the singular object type names used by tool callers and <c>api/search/</c> (e.g.
+/// "person") to their REST collection path (e.g. "api/people/").
 /// </summary>
 public static class GrampsObjectTypes
 {
@@ -22,7 +22,11 @@ public static class GrampsObjectTypes
 
     public static IReadOnlyCollection<string> Names => (IReadOnlyCollection<string>)PathSegments.Keys;
 
-    /// <summary>Resolves a type name to its REST collection path, e.g. "person" -> "/api/people/".</summary>
+    /// <summary>Resolves a type name to its REST collection path, e.g. "person" -> "api/people/".
+    /// Deliberately relative (no leading slash): <see cref="GrampsApiClient"/> composes this
+    /// against <c>HttpClient.BaseAddress</c>, and a leading slash would resolve path-absolute,
+    /// discarding any sub-path already present in that base address instead of appending to it.
+    /// </summary>
     /// <exception cref="ArgumentException">The type name is not recognised.</exception>
     public static string ResolveCollectionPath(string type)
     {
@@ -33,6 +37,6 @@ public static class GrampsObjectTypes
                 nameof(type));
         }
 
-        return $"/api/{segment}/";
+        return $"api/{segment}/";
     }
 }

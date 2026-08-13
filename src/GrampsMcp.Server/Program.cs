@@ -70,7 +70,7 @@ static async Task RunHttpAsync(string[] args)
     {
         try
         {
-            await apiClient.GetAsync<JsonElement>("/api/metadata/", cancellationToken);
+            await apiClient.GetAsync<JsonElement>("api/metadata/", cancellationToken);
             return Results.Ok(new { status = "healthy" });
         }
         catch (Exception exception) when (exception is GrampsApiException

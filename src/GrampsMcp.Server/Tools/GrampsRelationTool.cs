@@ -41,7 +41,7 @@ public sealed class GrampsRelationTool(GrampsApiClient apiClient)
                 query.Add(new KeyValuePair<string, string?>("locale", locale));
             }
 
-            var path = QueryHelpers.AddQueryString($"/api/relations/{handleA}/{handleB}", query);
+            var path = QueryHelpers.AddQueryString($"api/relations/{handleA}/{handleB}", query);
             return await apiClient.GetAsync<JsonElement>(path, cancellationToken);
         });
     }

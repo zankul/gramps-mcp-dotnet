@@ -32,6 +32,25 @@ public class GrampsHandleResolverTests
     }
 
     [Fact]
+    public async Task ResolveAsync_WhenMatchHasNoHandleProperty_ThrowsGrampsApiExceptionNotKeyNotFound()
+    {
+        // Regression guard for #84 finding 5a: HandleOnlyRequest asks for Keys = ["handle"], but
+        // that's only a hint some Gramps Web versions might ignore. A response missing "handle"
+        // altogether used to throw an untranslated KeyNotFoundException (GetProperty(...)! with no
+        // TryGetProperty guard), which GrampsToolErrors doesn't catch — the model would see the
+        // MCP SDK's generic error instead of a real diagnostic.
+        var handler = new TestHttpMessageHandler(_ => TestResponses.Json(
+            HttpStatusCode.OK, """[{"gramps_id":"I0155"}]"""));
+        var client = GrampsTestClientFactory.CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => GrampsHandleResolver.ResolveAsync(client, "person", "I0155", CancellationToken.None));
+
+        Assert.Contains("I0155", exception.Message);
+        Assert.Contains("handle", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ResolveAsync_WithSyntacticallyInvalidHandle_ThrowsArgumentException()
     {
         var handler = new TestHttpMessageHandler(_ => throw new InvalidOperationException("should not be called"));
