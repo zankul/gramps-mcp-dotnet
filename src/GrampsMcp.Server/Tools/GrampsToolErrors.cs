@@ -21,7 +21,7 @@ internal static class GrampsToolErrors
     {
         try
         {
-            return await operation().ConfigureAwait(false);
+            return await operation();
         }
         catch (GrampsApiException exception)
         {

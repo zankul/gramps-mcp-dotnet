@@ -20,8 +20,6 @@ public static class GrampsObjectTypes
         ["tag"] = "tags",
     };
 
-    public static IReadOnlyCollection<string> Names => (IReadOnlyCollection<string>)PathSegments.Keys;
-
     /// <summary>Resolves a type name to its REST collection path, e.g. "person" -> "api/people/".
     /// Deliberately relative (no leading slash): <see cref="GrampsApiClient"/> composes this
     /// against <c>HttpClient.BaseAddress</c>, and a leading slash would resolve path-absolute,

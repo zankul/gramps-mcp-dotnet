@@ -31,31 +31,30 @@ public class GrampsRetryPolicyTests
         Assert.Single(apiHandler.Requests);
     }
 
-    [Fact]
+    // Timeout is a belt-and-suspenders bound, not the mechanism that keeps these tests fast: if
+    // shrinkRetryDelay's Retry.Delay override (see BuildProvider) ever silently stopped applying —
+    // e.g. AddStandardResilienceHandler's named-options key drifting from
+    // $"{nameof(GrampsApiClient)}-standard" — the pipeline would fall back to real exponential
+    // backoff bounded only by the 120s TotalRequestTimeout, turning a fast, obvious failure into a
+    // multi-minute CI hang. 5s comfortably covers the near-zero-delay retry budget while still
+    // failing fast if the override ever silently stops applying.
+    [Fact(Timeout = 5000)]
     public async Task SendAsync_OnTransientFailure_RetriesGet()
     {
         var apiHandler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
-        await using var provider = BuildProvider(apiHandler);
+        await using var provider = BuildProvider(apiHandler, shrinkRetryDelay: true);
         var apiClient = provider.GetRequiredService<GrampsApiClient>();
 
-        // Bounded instead of letting all retry attempts play out (base 2s exponential backoff would
-        // make this test take ~15s): cancel once the first retry has had time to fire, which is
-        // enough to prove GET is retried at all.
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(4));
-        try
-        {
-            await apiClient.GetAsync<JsonElement>("/api/people/I0001", cancellation.Token);
-        }
-        catch (Exception exception) when (exception is OperationCanceledException or GrampsApiException)
-        {
-            // Expected: either the bounded cancellation or the pipeline exhausting its own retries
-            // first, both of which leave apiHandler.Requests populated for the assertion below.
-        }
+        // With the retry delay shrunk to near-zero (see BuildProvider), the pipeline runs its full
+        // retry budget in milliseconds instead of racing a multi-second exponential backoff — no
+        // bounded CancellationTokenSource needed to keep this deterministic.
+        await Assert.ThrowsAsync<GrampsApiException>(() =>
+            apiClient.GetAsync<JsonElement>("/api/people/I0001", CancellationToken.None));
 
         Assert.True(apiHandler.Requests.Count > 1, $"expected more than one request, got {apiHandler.Requests.Count}");
     }
 
-    [Fact]
+    [Fact(Timeout = 5000)]
     public async Task SendAsync_OnTransientFailure_RetriesPut()
     {
         // Companion to RetriesGet above: PUT is in IdempotentMethods too (Gramps Web's PUT replaces
@@ -63,39 +62,25 @@ public class GrampsRetryPolicyTests
         // -retried and POST-not-retried were tested, so dropping PUT from the set would silently
         // remove transient-fault resilience from gramps_update with no test failing.
         var apiHandler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
-        await using var provider = BuildProvider(apiHandler);
+        await using var provider = BuildProvider(apiHandler, shrinkRetryDelay: true);
         var apiClient = provider.GetRequiredService<GrampsApiClient>();
 
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(4));
-        try
-        {
-            await apiClient.ReplaceAsync("/api/people/I0001", JsonDocument.Parse("{}").RootElement, cancellation.Token);
-        }
-        catch (Exception exception) when (exception is OperationCanceledException or GrampsApiException)
-        {
-            // Expected: either the bounded cancellation or the pipeline exhausting its own retries.
-        }
+        await Assert.ThrowsAsync<GrampsApiException>(() =>
+            apiClient.ReplaceAsync("/api/people/I0001", JsonDocument.Parse("{}").RootElement, CancellationToken.None));
 
         Assert.True(apiHandler.Requests.Count > 1, $"expected more than one request, got {apiHandler.Requests.Count}");
     }
 
-    [Fact]
+    [Fact(Timeout = 5000)]
     public async Task SendAsync_OnTransientFailure_RetriesDelete()
     {
         // Same guardrail as RetriesPut above, for DELETE (gramps_delete).
         var apiHandler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
-        await using var provider = BuildProvider(apiHandler);
+        await using var provider = BuildProvider(apiHandler, shrinkRetryDelay: true);
         var apiClient = provider.GetRequiredService<GrampsApiClient>();
 
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(4));
-        try
-        {
-            await apiClient.DeleteAsync("/api/people/I0001", cancellation.Token);
-        }
-        catch (Exception exception) when (exception is OperationCanceledException or GrampsApiException)
-        {
-            // Expected: either the bounded cancellation or the pipeline exhausting its own retries.
-        }
+        await Assert.ThrowsAsync<GrampsApiException>(() =>
+            apiClient.DeleteAsync("/api/people/I0001", CancellationToken.None));
 
         Assert.True(apiHandler.Requests.Count > 1, $"expected more than one request, got {apiHandler.Requests.Count}");
     }
@@ -123,7 +108,7 @@ public class GrampsRetryPolicyTests
         Assert.Equal(TimeSpan.FromSeconds(120), options.TotalRequestTimeout.Timeout);
     }
 
-    private static ServiceProvider BuildProvider(HttpMessageHandler apiHandler)
+    private static ServiceProvider BuildProvider(HttpMessageHandler apiHandler, bool shrinkRetryDelay = false)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -143,6 +128,18 @@ public class GrampsRetryPolicyTests
         services.AddGrampsClient();
         services.AddHttpClient(GrampsTokenStore.AuthClientName).ConfigurePrimaryHttpMessageHandler(() => authHandler);
         services.AddHttpClient<GrampsApiClient>().ConfigurePrimaryHttpMessageHandler(() => apiHandler);
+
+        if (shrinkRetryDelay)
+        {
+            // Registered after AddGrampsClient's own Configure call above, so this overrides Retry.Delay
+            // on the same named options instance ($"{nameof(GrampsApiClient)}-standard") without
+            // disturbing the AttemptTimeout/TotalRequestTimeout/CircuitBreaker settings under test
+            // elsewhere. Lets retry-exhaustion tests run in milliseconds instead of racing the real
+            // multi-second exponential backoff against a CancellationTokenSource.
+            services.Configure<HttpStandardResilienceOptions>(
+                $"{nameof(GrampsApiClient)}-standard",
+                options => options.Retry.Delay = TimeSpan.FromMilliseconds(1));
+        }
 
         return services.BuildServiceProvider();
     }

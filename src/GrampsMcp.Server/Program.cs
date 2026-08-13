@@ -5,7 +5,15 @@ using GrampsMcp.Server.Http;
 using GrampsMcp.Server.Tools;
 using ModelContextProtocol.Server;
 
-var transport = Environment.GetEnvironmentVariable("MCP_TRANSPORT") ?? "http";
+// The transport choice has to be known before either host builder exists (it picks which one gets
+// built), so it can't go through builder.Configuration the way MCP_LOG_LEVEL and the rest do below.
+// This mirrors the sources those builders load by default — appsettings.json, environment
+// variables, command-line args — so MCP_TRANSPORT isn't the one setting that ignores them.
+var transport = new ConfigurationBuilder()
+    .AddJsonFile("appsettings.json", optional: true)
+    .AddEnvironmentVariables()
+    .AddCommandLine(args)
+    .Build()["MCP_TRANSPORT"] ?? "http";
 
 if (string.Equals(transport, "stdio", StringComparison.OrdinalIgnoreCase))
 {
