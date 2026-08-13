@@ -24,22 +24,18 @@ public class GrampsMergeToolTests
         var request = handler.Requests.Single();
         Assert.Equal(HttpMethod.Post, request.Method);
         Assert.Equal("/api/people/phoenix/merge/titanic", request.RequestUri!.AbsolutePath);
+        Assert.Equal("{}", handler.RequestBodies.Single());
     }
 
     [Fact]
     public async Task MergeAsync_WithoutOptions_SendsEmptyObjectBody()
     {
-        string? capturedBody = null;
-        var handler = new TestHttpMessageHandler(request =>
-        {
-            capturedBody = request.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
-            return new HttpResponseMessage(HttpStatusCode.OK);
-        });
+        var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK));
         var tool = new GrampsMergeTool(CreateClient(handler));
 
         await tool.MergeAsync("family", "phoenix", "titanic", options: null, CancellationToken.None);
 
-        Assert.Equal("{}", capturedBody);
+        Assert.Equal("{}", handler.RequestBodies.Single());
     }
 
     [Fact]

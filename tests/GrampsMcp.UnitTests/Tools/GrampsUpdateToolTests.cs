@@ -37,6 +37,18 @@ public class GrampsUpdateToolTests
         Assert.Equal("/api/people/h1", handler.Requests[1].RequestUri!.AbsolutePath);
         Assert.Equal(0, result.GetProperty("gender").GetInt32());
         Assert.Equal("I0001", result.GetProperty("gramps_id").GetString());
+
+        // The PUT body must be the *merged* object — the untouched "handle"/"gramps_id" fields
+        // from the GET preserved, and the patched "gender" field overwritten — never just the raw
+        // patch. A tool that PUT the raw patch instead would silently strip the record down to
+        // only the patched fields (permanent data loss) and this is the assertion that catches it.
+        var putBody = handler.RequestBodies[1];
+        Assert.NotNull(putBody);
+        using var putDocument = JsonDocument.Parse(putBody);
+        var putRoot = putDocument.RootElement;
+        Assert.Equal("h1", putRoot.GetProperty("handle").GetString());
+        Assert.Equal("I0001", putRoot.GetProperty("gramps_id").GetString());
+        Assert.Equal(0, putRoot.GetProperty("gender").GetInt32());
     }
 
     [Fact]

@@ -25,6 +25,7 @@ public class GrampsCreateToolTests
         var request = handler.Requests.Single();
         Assert.Equal(HttpMethod.Post, request.Method);
         Assert.Equal("/api/people/", request.RequestUri!.AbsolutePath);
+        Assert.Equal("""{"gramps_id":"I9999"}""", handler.RequestBodies.Single());
     }
 
     [Fact]

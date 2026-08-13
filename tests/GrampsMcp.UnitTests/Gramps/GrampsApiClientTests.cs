@@ -263,6 +263,7 @@ public class GrampsApiClientTests
         var request = handler.Requests.Single();
         Assert.Equal(HttpMethod.Post, request.Method);
         Assert.Equal("h1", result[0].GetProperty("handle").GetString());
+        Assert.Equal("""{"gramps_id":"I9999"}""", handler.RequestBodies.Single());
     }
 
     [Fact]
@@ -303,7 +304,10 @@ public class GrampsApiClientTests
 
         await client.ReplaceAsync("/api/people/h1", payload, CancellationToken.None);
 
-        Assert.Equal(HttpMethod.Put, handler.Requests.Single().Method);
+        var request = handler.Requests.Single();
+        Assert.Equal(HttpMethod.Put, request.Method);
+        Assert.Equal("/api/people/h1", request.RequestUri!.AbsolutePath);
+        Assert.Equal("""{"handle":"h1"}""", handler.RequestBodies.Single());
     }
 
     [Fact]
