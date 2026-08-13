@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using GrampsMcp.Server.Gramps;
+using Microsoft.AspNetCore.WebUtilities;
 
 namespace GrampsMcp.UnitTests.Gramps;
 
@@ -147,7 +148,16 @@ public class GrampsApiClientTests
 
         Assert.NotNull(found);
         Assert.Equal("I0155", found.GrampsId);
-        Assert.Contains("gramps_id=I0155", handler.Requests.Single().RequestUri!.Query);
+
+        // FindByGrampsIdAsync hits a collection endpoint (unlike GetAsync's single-object path),
+        // so it must force page=1&pagesize=1 rather than omit pagination — otherwise a silently
+        // ignored gramps_id filter would materialize the whole collection. Parsed into exact
+        // key-value pairs rather than raw substring checks, since e.g. "page=1" would also match
+        // an unintended "page=11".
+        var parameters = QueryHelpers.ParseQuery(handler.Requests.Single().RequestUri!.Query);
+        Assert.Equal("I0155", parameters["gramps_id"]);
+        Assert.Equal("1", parameters["page"]);
+        Assert.Equal("1", parameters["pagesize"]);
     }
 
     [Fact]

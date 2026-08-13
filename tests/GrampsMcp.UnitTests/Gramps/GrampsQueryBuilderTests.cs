@@ -115,6 +115,30 @@ public class GrampsQueryBuilderTests
         Assert.Equal("family_list,event_ref_list", Single(query, "extend"));
     }
 
+    [Fact]
+    public void BuildForIdLookup_ForcesPageOneAndPagesizeOne()
+    {
+        // Unlike BuildForGet, this hits a collection endpoint filtered by gramps_id, not a genuine
+        // single-object endpoint — so it must carry the same forced-pagination guardrail as any
+        // other collection call, to guard against the gramps_id filter ever being silently ignored
+        // upstream (as measured for /api/search/'s profile param).
+        var query = GrampsQueryBuilder.BuildForIdLookup(new GrampsGetRequest(), Options);
+
+        Assert.Equal("1", Single(query, "page"));
+        Assert.Equal("1", Single(query, "pagesize"));
+    }
+
+    [Fact]
+    public void BuildForIdLookup_AppliesDefaultProfileAndCommaJoinsExtend()
+    {
+        var query = GrampsQueryBuilder.BuildForIdLookup(
+            new GrampsGetRequest { Extend = ["family_list", "event_ref_list"] },
+            Options);
+
+        Assert.Equal("self,families,events", Single(query, "profile"));
+        Assert.Equal("family_list,event_ref_list", Single(query, "extend"));
+    }
+
     [Theory]
     [InlineData(0, 1)]
     [InlineData(-3, 1)]

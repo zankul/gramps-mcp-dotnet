@@ -128,6 +128,35 @@ public class ApiClientContractTests(LiveGrampsFixture fixture)
         Assert.Equal(1, rawMatches.GetArrayLength());
     }
 
+    /// <summary>
+    /// Confirms the premise <see cref="GrampsApiClient.FindByGrampsIdAsync{T}"/>'s NotFound
+    /// handling relies on: forcing <c>page=1&amp;pagesize=1</c> (added to defend against the
+    /// whole-collection-on-omitted-page quirk, see <see cref="GuardrailPremiseTests"/>) against a
+    /// <c>gramps_id</c> filter that matches zero rows still comes back as a plain HTTP 404, not a
+    /// 422 "page out of range" error. Measured directly against the real server rather than
+    /// assumed — <c>docs/PLAN.md</c> only measured explicit <c>page=0</c> being 422-rejected, which
+    /// is a different case (a structurally invalid page value, not a valid page against an empty
+    /// result set).
+    /// </summary>
+    [Fact]
+    public async Task RawGrampsIdFilter_WithForcedPageOneAndPagesizeOne_ReturnsNotFound_NotUnprocessableEntity_OnZeroMatches()
+    {
+        LiveStackGate.Require(fixture);
+
+        const string NonExistentGrampsId = "ZZTEST-DOES-NOT-EXIST-0000";
+
+        using var rawResponse = await fixture.RawClient.GetAsync(
+            $"/api/people/?gramps_id={NonExistentGrampsId}&page=1&pagesize=1", CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.NotFound, rawResponse.StatusCode);
+
+        // And confirms our own client surfaces that as "no match" (default), not a thrown exception.
+        var request = new GrampsGetRequest { Profile = "none", Keys = ["handle", "gramps_id"] };
+        var found = await fixture.ApiClient.FindByGrampsIdAsync<JsonElement>(
+            "/api/people/", NonExistentGrampsId, request, CancellationToken.None);
+        Assert.Equal(default, found);
+    }
+
     [Fact]
     public async Task GrampsGetTool_ResolvesAnchorPerson_ByGrampsId()
     {

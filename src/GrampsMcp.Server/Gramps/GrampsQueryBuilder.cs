@@ -67,12 +67,35 @@ internal static class GrampsQueryBuilder
     }
 
     /// <summary>
-    /// Builds query parameters for a single-object fetch — no page/pagesize, since Gramps Web's
-    /// single-object endpoint rejects unrecognised fields.
+    /// Builds query parameters for a genuine single-object fetch, e.g. <c>/api/people/{handle}</c> —
+    /// no page/pagesize, since that endpoint rejects unrecognised fields and would 422 on them.
+    /// This governs only the single-object-by-handle call site
+    /// (<see cref="GrampsApiClient.GetAsync{T}(string,GrampsGetRequest,CancellationToken)"/>); it
+    /// must NOT be reused for a collection endpoint filtered down to one row — see
+    /// <see cref="BuildForIdLookup"/> for that case, which needs the opposite pagination guardrail.
     /// </summary>
     public static IReadOnlyList<KeyValuePair<string, string?>> BuildForGet(GrampsGetRequest request, GrampsOptions options)
     {
         var query = new List<KeyValuePair<string, string?>>();
+        AppendShapingParameters(query, request.Profile, request.Extend, request.Keys, request.SkipKeys, options);
+        return query;
+    }
+
+    /// <summary>
+    /// Builds query parameters for <see cref="GrampsApiClient.FindByGrampsIdAsync{T}"/>, which
+    /// resolves a Gramps ID via a <em>collection</em> endpoint's <c>gramps_id</c> filter (e.g.
+    /// <c>/api/people/?gramps_id=I0155</c>), not a single-object endpoint — so, unlike
+    /// <see cref="BuildForGet"/>, this call site is subject to the same forced-pagination guardrail
+    /// as any other collection call: an omitted <c>page</c> is what makes Gramps Web return the
+    /// whole collection. If the <c>gramps_id</c> filter were ever silently ignored upstream (the
+    /// same failure mode already measured for <c>/api/search/</c>'s <c>profile</c> param), an
+    /// unpaginated request here would materialize the entire collection. Forces
+    /// <c>page=1&amp;pagesize=1</c> — a Gramps ID lookup only ever wants a single row.
+    /// </summary>
+    public static List<KeyValuePair<string, string?>> BuildForIdLookup(GrampsGetRequest request, GrampsOptions options)
+    {
+        var query = BuildPagination(1, 1, options);
+
         AppendShapingParameters(query, request.Profile, request.Extend, request.Keys, request.SkipKeys, options);
         return query;
     }

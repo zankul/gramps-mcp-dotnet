@@ -156,7 +156,7 @@ public sealed class GrampsApiClient(HttpClient httpClient, IOptions<GrampsOption
     public async Task<T?> FindByGrampsIdAsync<T>(
         string collectionPath, string grampsId, GrampsGetRequest request, CancellationToken cancellationToken)
     {
-        var query = GrampsQueryBuilder.BuildForGet(request, options.Value).ToList();
+        var query = GrampsQueryBuilder.BuildForIdLookup(request, options.Value);
         query.Add(new KeyValuePair<string, string?>("gramps_id", grampsId));
         var url = QueryHelpers.AddQueryString(collectionPath, query);
 
@@ -166,8 +166,20 @@ public sealed class GrampsApiClient(HttpClient httpClient, IOptions<GrampsOption
             return default;
         }
 
+        // Only 404 is treated as "no match" — this relies on page=1&pagesize=1 (forced by
+        // BuildForIdLookup) against a gramps_id filter matching zero rows coming back as a plain
+        // 404 rather than a 422 "page out of range". Measured directly against a real Gramps Web
+        // server (see ApiClientContractTests.
+        // RawGrampsIdFilter_WithForcedPageOneAndPagesizeOne_ReturnsNotFound_NotUnprocessableEntity_OnZeroMatches),
+        // confirming it as 404 — docs/PLAN.md only measured explicit page=0 being 422-rejected,
+        // a different, structurally-invalid case.
+
         await GrampsErrorTranslator.EnsureSuccessAsync(response, cancellationToken);
         var items = await response.Content.ReadFromJsonAsync<List<T>>(cancellationToken) ?? [];
+
+        // pagesize=1 means a genuine duplicate gramps_id would silently return only this first
+        // match rather than surfacing the ambiguity — acceptable because Gramps IDs are expected
+        // to be unique per collection, and detecting a violation of that isn't this guardrail's job.
         return items.Count > 0 ? items[0] : default;
     }
 
