@@ -17,6 +17,17 @@ public sealed class GrampsOptions : IValidatableObject
     [Range(1, int.MaxValue)]
     public int MaxPageSize { get; set; } = 100;
 
+    /// <summary>
+    /// Default <c>pagesize</c> for <c>/api/search/</c> when a caller omits it. Deliberately
+    /// smaller than <see cref="MaxPageSize"/>: search is the tool the model is told to reach for
+    /// by default, and each hit carries the full raw object (no server-side trimming is possible —
+    /// <c>/api/search/</c> silently ignores <c>profile</c>/<c>keys</c>/<c>skipkeys</c>), so
+    /// defaulting to <see cref="MaxPageSize"/> would flood the model's context on the common case.
+    /// Callers can still request up to <see cref="MaxPageSize"/> explicitly.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    public int SearchDefaultPageSize { get; set; } = 20;
+
     [Required(AllowEmptyStrings = false)]
     public string DefaultProfile { get; set; } = "self,families,events";
 
@@ -34,6 +45,13 @@ public sealed class GrampsOptions : IValidatableObject
                 $"MCP_LOG_LEVEL '{LogLevel}' is not a valid log level. Expected one of: None, " +
                 "Critical, Error, Warning, Information, Debug, Trace.",
                 [nameof(LogLevel)]);
+        }
+
+        if (SearchDefaultPageSize > MaxPageSize)
+        {
+            yield return new ValidationResult(
+                $"SearchDefaultPageSize ({SearchDefaultPageSize}) cannot exceed MaxPageSize ({MaxPageSize}).",
+                [nameof(SearchDefaultPageSize)]);
         }
     }
 

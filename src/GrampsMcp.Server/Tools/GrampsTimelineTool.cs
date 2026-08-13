@@ -37,7 +37,7 @@ public sealed class GrampsTimelineTool(GrampsApiClient apiClient)
             "with a 422).")]
         string? dates = null,
         [Description("Page number, starting at 1.")] int page = 1,
-        [Description("Items per page (server-capped).")] int? pagesize = null,
+        [Description("Items per page. Omitting it returns the server's max page size; explicit values are still capped at that max.")] int? pagesize = null,
         [Description("Top-level keys to include in each event; all others are omitted.")]
         IReadOnlyList<string>? keys = null,
         CancellationToken cancellationToken = default)

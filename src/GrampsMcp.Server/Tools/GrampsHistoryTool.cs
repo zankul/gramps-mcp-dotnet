@@ -17,7 +17,7 @@ public sealed class GrampsHistoryTool(GrampsApiClient apiClient)
         "are enabled. Use the `id` of a transaction with gramps_undo to reverse it.")]
     public async Task<GrampsListResult<JsonElement>> ListAsync(
         [Description("Page number, starting at 1.")] int page = 1,
-        [Description("Items per page (server-capped).")] int? pagesize = null,
+        [Description("Items per page. Omitting it returns the server's max page size; explicit values are still capped at that max.")] int? pagesize = null,
         [Description("Sort key: 'id' (oldest first) or '-id' (most recent first, the default).")]
         string sort = "-id",
         CancellationToken cancellationToken = default)

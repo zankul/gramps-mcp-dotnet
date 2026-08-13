@@ -25,6 +25,7 @@ public static class GrampsServiceCollectionExtensions
                 options.Username = configuration["GRAMPS_USERNAME"] ?? string.Empty;
                 options.Password = configuration["GRAMPS_PASSWORD"] ?? string.Empty;
                 options.MaxPageSize = configuration.GetValue("GRAMPS_MAX_PAGESIZE", 100);
+                options.SearchDefaultPageSize = configuration.GetValue("GRAMPS_SEARCH_DEFAULT_PAGESIZE", 20);
                 options.DefaultProfile = configuration["GRAMPS_DEFAULT_PROFILE"] ?? "self,families,events";
                 options.LogLevel = configuration["MCP_LOG_LEVEL"];
             })

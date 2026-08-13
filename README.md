@@ -53,6 +53,7 @@ safe, and cheap in context**. Three measured facts from the Gramps Web API drive
 | `MCP_ALLOWED_ORIGINS` | `http://localhost:8080,http://127.0.0.1:8080` | Comma-separated Origin allowlist for the `http` transport (DNS-rebinding defense — see [SECURITY.md](SECURITY.md)) |
 | `MCP_LOG_LEVEL` | _(unset)_ | `None`/`Critical`/`Error`/`Warning`/`Information`/`Debug`/`Trace`. Unset preserves current per-transport defaults |
 | `GRAMPS_MAX_PAGESIZE` | `100` | Hard cap on page size |
+| `GRAMPS_SEARCH_DEFAULT_PAGESIZE` | `20` | Default `pagesize` for `gramps_search` when omitted — kept well below `GRAMPS_MAX_PAGESIZE` since each hit carries its full raw object |
 | `GRAMPS_DEFAULT_PROFILE` | `self,families,events` | Default readable response shape |
 
 Copy `.env.example` to `.env` to get started.

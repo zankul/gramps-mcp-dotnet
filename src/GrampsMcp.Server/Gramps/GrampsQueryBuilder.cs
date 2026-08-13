@@ -32,9 +32,14 @@ internal static class GrampsQueryBuilder
     /// endpoint only supports <c>type[]</c> and <c>semantic</c> (added separately by the caller)
     /// and doesn't honor the profile/extend/keys/skipkeys shaping params the other list endpoints
     /// accept (measured live for <c>profile</c>: silently ignored, <c>200 OK</c>, not rejected).
+    /// An omitted <c>pagesize</c> defaults to <see cref="GrampsOptions.SearchDefaultPageSize"/>,
+    /// not <see cref="GrampsOptions.MaxPageSize"/> — gramps_search is the tool callers are told to
+    /// reach for by default, and every hit carries its full untrimmed object (no server-side
+    /// trimming is possible here), so defaulting to the max page would flood the model's context
+    /// on the common case. Callers can still explicitly request up to <c>MaxPageSize</c>.
     /// </summary>
     public static List<KeyValuePair<string, string?>> BuildForSearch(GrampsListRequest request, GrampsOptions options) =>
-        BuildPagination(request.Page, request.PageSize, options);
+        BuildPagination(request.Page, request.PageSize, options, options.SearchDefaultPageSize);
 
     /// <summary>
     /// Builds query parameters for a GQL filter fetch (<c>/api/{type}/?gql=...</c>) — page/pagesize
@@ -48,10 +53,11 @@ internal static class GrampsQueryBuilder
         return query;
     }
 
-    private static List<KeyValuePair<string, string?>> BuildPagination(int page, int? pageSize, GrampsOptions options)
+    private static List<KeyValuePair<string, string?>> BuildPagination(
+        int page, int? pageSize, GrampsOptions options, int? defaultPageSize = null)
     {
         var resolvedPage = Math.Max(1, page);
-        var resolvedPageSize = Math.Clamp(pageSize ?? options.MaxPageSize, 1, options.MaxPageSize);
+        var resolvedPageSize = Math.Clamp(pageSize ?? defaultPageSize ?? options.MaxPageSize, 1, options.MaxPageSize);
 
         return
         [

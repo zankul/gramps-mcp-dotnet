@@ -195,6 +195,27 @@ public class GrampsApiClientTests
     }
 
     [Fact]
+    public async Task SearchAsync_WhenPageSizeOmitted_DefaultsToSearchDefaultNotMaxPageSize()
+    {
+        var handler = new TestHttpMessageHandler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("[]", Encoding.UTF8, "application/json"),
+            };
+            response.Headers.Add("x-total-count", "0");
+            return response;
+        });
+        var client = CreateClient(handler);
+
+        await client.SearchAsync(new GrampsSearchRequest { Query = "Sutherland" }, CancellationToken.None);
+
+        var query = handler.Requests.Single().RequestUri!.Query;
+        Assert.Contains($"pagesize={GrampsTestClientFactory.Options.SearchDefaultPageSize}", query);
+        Assert.DoesNotContain($"pagesize={GrampsTestClientFactory.Options.MaxPageSize}", query);
+    }
+
+    [Fact]
     public async Task SearchAsync_OnUnconfiguredSemanticSearch503_ThrowsActionableMessage()
     {
         var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
