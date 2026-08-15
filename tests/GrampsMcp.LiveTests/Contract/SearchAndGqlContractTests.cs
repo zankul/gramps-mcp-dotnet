@@ -116,7 +116,7 @@ public class SearchAndGqlContractTests(LiveGrampsFixture fixture)
         LiveStackGate.Require(fixture);
 
         var tool = new GrampsQueryTool(fixture.ApiClient);
-        var result = await tool.QueryAsync("person", "family_list.length >= 3", page: 1, pagesize: 10, keys: null, CancellationToken.None);
+        var result = await tool.QueryAsync("person", "family_list.length >= 3", page: 1, pagesize: 10, keys: null, cancellationToken: CancellationToken.None);
 
         Assert.Equal(2, result.Total);
         Assert.Contains(result.Items, item => item.GetProperty("handle").GetString() == ExampleTree.AnchorPersonHandle);

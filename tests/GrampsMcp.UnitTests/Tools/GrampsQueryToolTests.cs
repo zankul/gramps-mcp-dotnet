@@ -29,6 +29,28 @@ public class GrampsQueryToolTests
     }
 
     [Fact]
+    public async Task QueryAsync_PassesThroughProfileExtendAndSkipKeys()
+    {
+        var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""[{"handle":"h1"}]""", Encoding.UTF8, "application/json"),
+        });
+        var tool = new GrampsQueryTool(GrampsTestClientFactory.CreateClient(handler));
+
+        await tool.QueryAsync(
+            "person",
+            "surname = X",
+            profile: "none",
+            extend: ["family_list"],
+            skipkeys: ["citation_list", "note_list"]);
+
+        var request = handler.Requests.Single();
+        Assert.DoesNotContain("profile=", request.RequestUri!.Query);
+        Assert.Contains("extend=family_list", request.RequestUri.Query);
+        Assert.Contains("skipkeys=citation_list,note_list", request.RequestUri.Query);
+    }
+
+    [Fact]
     public async Task QueryAsync_OnUnknownType_ThrowsBeforeMakingAnyRequest()
     {
         var handler = new TestHttpMessageHandler(_ => throw new InvalidOperationException("should not be called"));

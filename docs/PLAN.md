@@ -303,11 +303,10 @@ measurements, not assumptions, and they are why the design looks the way it does
     note_list` removed exactly those two keys from the row. This corrects
     `GrampsQueryBuilder.BuildForGql`'s old comment, which cited fact #5 for a claim fact #5 never
     made (fact #5 is about GQL's expression language having no `sort`/aggregation/joins, not about
-    endpoint shaping params). `BuildForGql` still doesn't send these params — `GrampsGqlRequest`
-    has no fields for them yet — which is a missed opportunity (a defaulted `profile` would remove
-    a class of follow-up `gramps_get` calls after a GQL search) left as a follow-up rather than
-    fixed here, since wiring it through the request record and tool description is a bigger change
-    than this fact-check warranted.
+    endpoint shaping params). `BuildForGql` now sends these params: `GrampsGqlRequest` carries
+    `Profile`/`Extend`/`Keys`/`SkipKeys`, and `profile` defaults the same way `Build` does (with a
+    conservative `GrampsOptions.GqlDefaultPageSize` bounding the case where a GQL filter matches
+    broadly), removing a whole class of follow-up `gramps_get` calls after a GQL search (issue #86).
 15. **A JWT lacking `ViewPrivate` does not get 403'd on a private record — it gets a silently
     filtered `200`.** Measured live (2026-08-13): marked an existing seeded person (`I0001`)
     `private: true` as the owner account, then created a `GUEST`-role user (role `0`; the only

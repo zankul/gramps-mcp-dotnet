@@ -34,7 +34,9 @@ public sealed class GrampsApiClient(HttpClient httpClient, IOptions<GrampsOption
     /// always be 1 regardless of the real match count, i.e. a plausible-looking wrong answer.</summary>
     public async Task<int> CountAsync(string path, string gql, CancellationToken cancellationToken)
     {
-        var request = new GrampsGqlRequest { Gql = gql, PageSize = 1, Keys = ["handle"] };
+        // Profile = "none": this call only reads the x-total-count header and discards the body,
+        // so resolving profile data upstream (BuildForGql's new default) would be wasted work.
+        var request = new GrampsGqlRequest { Gql = gql, PageSize = 1, Keys = ["handle"], Profile = "none" };
         var query = BuildGqlQuery(request);
 
         var (_, total, statusCode, _, _) = await ExecuteRequestAsync<JsonElement>(path, query, cancellationToken);

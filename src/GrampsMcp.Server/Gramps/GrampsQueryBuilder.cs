@@ -42,20 +42,22 @@ internal static class GrampsQueryBuilder
         BuildPagination(request.Page, request.PageSize, options, options.SearchDefaultPageSize);
 
     /// <summary>
-    /// Builds query parameters for a GQL filter fetch (<c>/api/{type}/?gql=...</c>) — page/pagesize
-    /// and <c>keys</c> only. This is a deliberate choice, not an upstream restriction: measured live,
+    /// Builds query parameters for a GQL filter fetch (<c>/api/{type}/?gql=...</c>). Measured live,
     /// GQL endpoints actually *honor* <c>profile</c>/<c>extend</c>/<c>skipkeys</c> exactly like the
     /// plain list endpoints do (adds a resolved <c>profile</c> section, an <c>extended</c> section,
-    /// or drops the named keys respectively — see <c>docs/PLAN.md</c> fact #14). <c>GrampsGqlRequest</c>
-    /// simply doesn't expose those params yet; wiring them up (in particular defaulting
-    /// <c>profile</c> the way <see cref="Build"/> does) is a worthwhile follow-up, since profiled GQL
-    /// results would remove a whole class of follow-up <c>gramps_get</c> calls, but is left undone
-    /// here — see fact #14's note. The <c>gql</c> parameter itself is added by the caller.
+    /// or drops the named keys respectively — see <c>docs/PLAN.md</c> fact #14), so this applies the
+    /// same <see cref="AppendShapingParameters"/> shaping <see cref="Build"/> does — a defaulted
+    /// <c>profile</c> removes a whole class of follow-up <c>gramps_get</c> calls after a GQL search.
+    /// Pagesize defaults to <see cref="GrampsOptions.GqlDefaultPageSize"/>, not
+    /// <see cref="GrampsOptions.MaxPageSize"/>: <c>gramps_query</c> is framed as a narrow escape
+    /// hatch (see its tool description), so a conservative default bounds the case where a GQL
+    /// filter matches broadly, the same way <see cref="BuildForSearch"/> bounds search's common
+    /// case. The <c>gql</c> parameter itself is added by the caller.
     /// </summary>
     public static List<KeyValuePair<string, string?>> BuildForGql(GrampsGqlRequest request, GrampsOptions options)
     {
-        var query = BuildPagination(request.Page, request.PageSize, options);
-        AddCommaJoined(query, "keys", request.Keys);
+        var query = BuildPagination(request.Page, request.PageSize, options, options.GqlDefaultPageSize);
+        AppendShapingParameters(query, request.Profile, request.Extend, request.Keys, request.SkipKeys, options);
         return query;
     }
 

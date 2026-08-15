@@ -218,11 +218,51 @@ public class GrampsQueryBuilderTests
     }
 
     [Fact]
-    public void BuildForGql_DoesNotApplyProfileOrSort()
+    public void BuildForGql_CommaJoinsExtendAndSkipKeys()
+    {
+        var query = GrampsQueryBuilder.BuildForGql(
+            new GrampsGqlRequest
+            {
+                Gql = "surname = X",
+                Extend = ["family_list", "event_ref_list"],
+                SkipKeys = ["citation_list", "note_list"],
+            },
+            Options);
+
+        Assert.Equal("family_list,event_ref_list", Single(query, "extend"));
+        Assert.Equal("citation_list,note_list", Single(query, "skipkeys"));
+    }
+
+    [Fact]
+    public void BuildForGql_DoesNotApplySort()
     {
         var query = GrampsQueryBuilder.BuildForGql(new GrampsGqlRequest { Gql = "surname = X" }, Options);
 
-        Assert.DoesNotContain(query, kv => kv.Key is "profile" or "sort" or "extend" or "skipkeys");
+        Assert.DoesNotContain(query, kv => kv.Key == "sort");
+    }
+
+    [Fact]
+    public void BuildForGql_WhenProfileUnspecified_AppliesDefaultProfile()
+    {
+        var query = GrampsQueryBuilder.BuildForGql(new GrampsGqlRequest { Gql = "surname = X" }, Options);
+
+        Assert.Equal("self,families,events", Single(query, "profile"));
+    }
+
+    [Fact]
+    public void BuildForGql_WhenProfileIsNone_OmitsProfile()
+    {
+        var query = GrampsQueryBuilder.BuildForGql(new GrampsGqlRequest { Gql = "surname = X", Profile = "none" }, Options);
+
+        Assert.DoesNotContain(query, kv => kv.Key == "profile");
+    }
+
+    [Fact]
+    public void BuildForGql_WhenPageSizeUnspecified_DefaultsToGqlDefaultPageSize()
+    {
+        var query = GrampsQueryBuilder.BuildForGql(new GrampsGqlRequest { Gql = "surname = X" }, Options);
+
+        Assert.Equal(Options.GqlDefaultPageSize.ToString(CultureInfo.InvariantCulture), Single(query, "pagesize"));
     }
 
     private static string? Single(IReadOnlyList<KeyValuePair<string, string?>> query, string key) =>

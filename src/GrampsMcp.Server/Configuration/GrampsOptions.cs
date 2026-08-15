@@ -39,6 +39,17 @@ public sealed class GrampsOptions : IValidatableObject
     [Range(1, int.MaxValue)]
     public int SearchDefaultPageSize { get; set; } = 20;
 
+    /// <summary>
+    /// Default <c>pagesize</c> for a GQL filter fetch (<see cref="GrampsQueryBuilder.BuildForGql"/>)
+    /// when a caller omits it. Deliberately smaller than <see cref="MaxPageSize"/> for the same
+    /// reason as <see cref="SearchDefaultPageSize"/>: <c>gramps_query</c> is framed as a narrow
+    /// escape hatch, not the default lookup path, but a broad GQL filter can still match widely, so
+    /// this bounds that worst case instead of leaving it unbounded. Callers can still request up to
+    /// <see cref="MaxPageSize"/> explicitly.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    public int GqlDefaultPageSize { get; set; } = 20;
+
     [Required(AllowEmptyStrings = false)]
     public string DefaultProfile { get; set; } = "self,families,events";
 
@@ -63,6 +74,13 @@ public sealed class GrampsOptions : IValidatableObject
             yield return new ValidationResult(
                 $"SearchDefaultPageSize ({SearchDefaultPageSize}) cannot exceed MaxPageSize ({MaxPageSize}).",
                 [nameof(SearchDefaultPageSize)]);
+        }
+
+        if (GqlDefaultPageSize > MaxPageSize)
+        {
+            yield return new ValidationResult(
+                $"GqlDefaultPageSize ({GqlDefaultPageSize}) cannot exceed MaxPageSize ({MaxPageSize}).",
+                [nameof(GqlDefaultPageSize)]);
         }
     }
 

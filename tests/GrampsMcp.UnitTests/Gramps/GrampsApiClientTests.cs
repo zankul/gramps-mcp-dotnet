@@ -87,6 +87,29 @@ public class GrampsApiClientTests
     }
 
     [Fact]
+    public async Task CountAsync_OmitsProfileFromQuery()
+    {
+        // CountAsync only reads the x-total-count header and discards the body, so it must not
+        // pick up BuildForGql's default profile — that would make upstream resolve profile data
+        // for no benefit on every count call.
+        var handler = new TestHttpMessageHandler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""[{"handle":"h1"}]""", Encoding.UTF8, "application/json"),
+            };
+            response.Headers.Add("x-total-count", "1");
+            return response;
+        });
+        var client = CreateClient(handler);
+
+        await client.CountAsync("/api/people/", "gender == 1", CancellationToken.None);
+
+        var query = handler.Requests.Single().RequestUri!.Query;
+        Assert.DoesNotContain("profile=", query);
+    }
+
+    [Fact]
     public async Task GetAsync_OnErrorStatus_ThrowsGrampsApiException()
     {
         var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)
