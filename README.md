@@ -104,11 +104,9 @@ A separate, always-seeded, disposable stack (`docker-compose.test.yml`) backs th
 test tier — see [docs/testing.md](docs/testing.md).
 
 A pre-built multi-arch image (`linux/amd64`, `linux/arm64`) is published to GHCR on every push to
-`main` and on version tags. It's currently private, so pulling it requires a GitHub PAT with
-`read:packages` scope:
+`main` and on version tags. It's public, so no login is needed:
 
 ```bash
-echo $GITHUB_PAT | docker login ghcr.io -u <your-github-username> --password-stdin
 docker pull ghcr.io/zankul/gramps-mcp-dotnet:latest   # newest release
 # or: :edge for the latest main commit, :X.Y.Z / :X.Y / :X for a specific released version
 docker run --rm -p 127.0.0.1:8080:8080 --env-file .env ghcr.io/zankul/gramps-mcp-dotnet:latest

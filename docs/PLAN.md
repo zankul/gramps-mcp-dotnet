@@ -37,7 +37,7 @@ Each phase is independently shippable and ends in a working state.
 **Goal:** a repository that builds and tests green on CI with nothing in it yet.
 
 - [x] `git init`, `.gitignore`, `.editorconfig`, MIT `LICENSE`, `README.md`, `.env.example`
-- [x] Private GitHub repo, pushed
+- [x] GitHub repo created and pushed (private until the first public release)
 - [x] Install .NET 10 SDK locally
 - [x] `GrampsMcp.slnx` with `src/GrampsMcp.Server`, `tests/GrampsMcp.UnitTests`,
       `tests/GrampsMcp.LiveTests`
@@ -213,9 +213,9 @@ anyone with pull access, not a step to rush ahead of local verification.
 - [x] README: pull-and-run instructions using the published image, replacing the "build locally"
       note from Phase 6
 
-Registry package is kept **private** until verified end-to-end (multi-arch build, all tag
-variants, `docker pull` with a PAT), then flipped to public manually. Docker Hub publishing is
-deferred to whenever that visibility flip happens.
+The registry package was kept **private** until verified end-to-end (multi-arch build, all tag
+variants, `docker pull` with a PAT); its visibility is flipped to public manually, alongside the
+repo, at the first release. Docker Hub publishing is deferred beyond that.
 
 **Done when:** `docker pull ghcr.io/<owner>/gramps-mcp-dotnet:latest && docker run ...` works on a
 fresh machine with no local build step.
