@@ -51,5 +51,10 @@ HTTP.
 
 ## Reporting a vulnerability
 
-Please open a GitHub issue on this repository. If the report involves sensitive details you'd
-rather not post publicly, say so in the issue and we'll follow up privately.
+Please report vulnerabilities privately through GitHub's
+[private vulnerability reporting](https://github.com/zankul/gramps-mcp-dotnet/security/advisories/new)
+(the **Security** tab → **Report a vulnerability**). Please don't open a public issue for anything
+that could be exploited before a fix is available.
+
+Include the version or commit, the transport (`http` or `stdio`) and a minimal reproduction. This
+is a spare-time project: expect an acknowledgement within a week or so, not an SLA.
