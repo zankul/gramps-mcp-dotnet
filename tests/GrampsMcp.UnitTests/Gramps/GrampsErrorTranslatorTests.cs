@@ -79,6 +79,21 @@ public class GrampsErrorTranslatorTests
     }
 
     [Fact]
+    public async Task EnsureSuccessAsync_OnHtmlThatSlowsTheRegex_StillThrowsGrampsApiException()
+    {
+        // Many "<script" openers with no closing tag drive the script/style regex quadratic.
+        using var response = new HttpResponseMessage(HttpStatusCode.BadGateway)
+        {
+            Content = new StringContent("<html>" + string.Concat(Enumerable.Repeat("<script ", 1000))),
+        };
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => GrampsErrorTranslator.EnsureSuccessAsync(response, CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.BadGateway, exception.StatusCode);
+    }
+
+    [Fact]
     public async Task EnsureSuccessAsync_OnGqlParseError_PassesErrorMessageVerbatim()
     {
         const string parseError = "Expected end of text, found '~' (at char 31), (line:1, col:32)";

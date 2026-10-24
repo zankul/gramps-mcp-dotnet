@@ -86,7 +86,7 @@ public class GrampsWriteSerializationTests
         using var gate = new GrampsWriteGate();
         var release = new TaskCompletionSource();
         var entered = new TaskCompletionSource();
-        var holder = gate.RunAsync(async () =>
+        var holder = gate.RunAsync(async _ =>
         {
             entered.SetResult();
             await release.Task;
@@ -95,7 +95,7 @@ public class GrampsWriteSerializationTests
         await entered.Task;
 
         using var cts = new CancellationTokenSource();
-        var waiter = gate.RunAsync(() => Task.FromResult(1), cts.Token);
+        var waiter = gate.RunAsync(_ => Task.FromResult(1), cts.Token);
         await cts.CancelAsync();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiter);
 
@@ -103,9 +103,42 @@ public class GrampsWriteSerializationTests
         await holder;
 
         // The cancelled waiter must not have leaked the semaphore.
-        var next = await gate.RunAsync(() => Task.FromResult(2), CancellationToken.None)
+        var next = await gate.RunAsync(_ => Task.FromResult(2), CancellationToken.None)
             .WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(2, next);
+    }
+
+    [Fact]
+    public async Task CancellingInFlightWrite_DoesNotReleaseGateUntilItCompletes()
+    {
+        using var gate = new GrampsWriteGate();
+        var finishFirst = new TaskCompletionSource();
+        var firstStarted = new TaskCompletionSource();
+        var secondStarted = false;
+        using var cts = new CancellationTokenSource();
+
+        var first = gate.RunAsync(async ct =>
+        {
+            firstStarted.SetResult();
+            await finishFirst.Task;
+            return ct.IsCancellationRequested;
+        }, cts.Token);
+        await firstStarted.Task;
+
+        var second = gate.RunAsync(_ =>
+        {
+            secondStarted = true;
+            return Task.FromResult(0);
+        }, CancellationToken.None);
+
+        await cts.CancelAsync();
+        await Task.Delay(50);
+        Assert.False(secondStarted); // first is still running server-side, so the gate stays held
+
+        finishFirst.SetResult();
+        Assert.False(await first); // the action was never handed the cancelled token
+        await second.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(secondStarted);
     }
 
     private static void InterlockedMax(ref int target, int value)

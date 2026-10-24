@@ -82,10 +82,7 @@ internal static partial class GrampsErrorTranslator
     private static string HtmlErrorMessage(string body, HttpResponseMessage response)
     {
         var status = (int)response.StatusCode;
-        var head = body.Length > HtmlScanLength ? body[..HtmlScanLength] : body;
-        var text = TagsAndWhitespace().Replace(ScriptAndStyleBlocks().Replace(head, " "), " ").Trim();
-        text = WebUtility.HtmlDecode(text);
-        var excerpt = text.Length > HtmlExcerptLength ? TruncateAtCodePoint(text, HtmlExcerptLength) + "…" : text;
+        var excerpt = ExtractHtmlExcerpt(body);
         var detail = excerpt.Length > 0 ? $" Page text: \"{excerpt}\"" : string.Empty;
 
         return response.StatusCode == HttpStatusCode.InternalServerError
@@ -94,6 +91,25 @@ internal static partial class GrampsErrorTranslator
               $"overlapping writes) and need a restart.{detail}"
             : $"Gramps Web or a proxy in front of it returned an HTML error page (HTTP {status}) " +
               $"instead of a JSON error.{detail}";
+    }
+
+    /// <summary>Best-effort text excerpt of an HTML page. If a regex times out on a pathological
+    /// body, returns nothing rather than letting <see cref="RegexMatchTimeoutException"/> escape —
+    /// the tool layer only translates <see cref="GrampsApiException"/>, so the model would lose the
+    /// status code behind a generic SDK error.</summary>
+    private static string ExtractHtmlExcerpt(string body)
+    {
+        try
+        {
+            var head = body.Length > HtmlScanLength ? body[..HtmlScanLength] : body;
+            var text = TagsAndWhitespace().Replace(ScriptAndStyleBlocks().Replace(head, " "), " ").Trim();
+            text = WebUtility.HtmlDecode(text);
+            return text.Length > HtmlExcerptLength ? TruncateAtCodePoint(text, HtmlExcerptLength) + "…" : text;
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return string.Empty;
+        }
     }
 
     private static string TruncateAtCodePoint(string text, int length) =>

@@ -13,7 +13,6 @@ namespace GrampsMcp.Server.Gramps;
 public sealed class GrampsApiClient(
     HttpClient httpClient, IOptions<GrampsOptions> options, GrampsWriteGate writeGate)
 {
-
     public Task<GrampsListResult<T>> ListAsync<T>(
         string path, GrampsListRequest request, CancellationToken cancellationToken) =>
         ExecuteListAsync<T>(path, GrampsQueryBuilder.Build(request, options.Value), cancellationToken);
@@ -62,25 +61,22 @@ public sealed class GrampsApiClient(
         PostAsync(path, payload, cancellationToken);
 
     /// <summary>Replaces an object wholesale, e.g. <c>PUT /api/people/{handle}</c> — Gramps Web's PUT
-    /// replaces the entire object, so callers must read-modify-write the full body.</summary>
-    public Task ReplaceAsync(string path, JsonElement payload, CancellationToken cancellationToken) =>
-        writeGate.RunAsync(async () =>
-        {
-            await SendReplaceAsync(path, payload, cancellationToken);
-            return true;
-        }, cancellationToken);
+    /// replaces the entire object, so callers must read-modify-write the full body. Internal on
+    /// purpose: a caller doing its own read first would race a concurrent update, so production
+    /// code goes through <see cref="ReadModifyWriteAsync"/>.</summary>
+    internal Task ReplaceAsync(string path, JsonElement payload, CancellationToken cancellationToken) =>
+        writeGate.RunAsync(ct => SendReplaceAsync(path, payload, ct), cancellationToken);
 
     /// <summary>Reads an object, applies <paramref name="modify"/> and PUTs the result back while
     /// holding the write gate across both steps, so two concurrent read-modify-writes of the same
     /// object queue instead of one overwriting the other's change. Returns the written object.</summary>
     public Task<JsonElement> ReadModifyWriteAsync(
         string path, Func<JsonElement, JsonElement> modify, CancellationToken cancellationToken) =>
-        writeGate.RunAsync(async () =>
+        writeGate.RunAsync(async ct =>
         {
-            var current = await GetAsync<JsonElement>(
-                path, new GrampsGetRequest { Profile = "none" }, cancellationToken);
+            var current = await GetAsync<JsonElement>(path, new GrampsGetRequest { Profile = "none" }, ct);
             var modified = modify(current);
-            await SendReplaceAsync(path, modified, cancellationToken);
+            await SendReplaceAsync(path, modified, ct);
             return modified;
         }, cancellationToken);
 
@@ -92,27 +88,26 @@ public sealed class GrampsApiClient(
 
     /// <summary>Deletes an object, e.g. <c>DELETE /api/people/{handle}</c>.</summary>
     public Task DeleteAsync(string path, CancellationToken cancellationToken) =>
-        writeGate.RunAsync(async () =>
+        writeGate.RunAsync(async ct =>
         {
-            using var response = await httpClient.DeleteAsync(path, cancellationToken);
-            await GrampsErrorTranslator.EnsureSuccessAsync(response, cancellationToken);
-            return true;
+            using var response = await httpClient.DeleteAsync(path, ct);
+            await GrampsErrorTranslator.EnsureSuccessAsync(response, ct);
         }, cancellationToken);
 
     /// <summary>Posts a JSON body with no list-shaped response, e.g. merging two objects at
     /// <c>POST /api/people/{phoenix}/merge/{titanic}</c>.</summary>
     public Task<JsonElement> PostAsync(string path, JsonElement body, CancellationToken cancellationToken) =>
-        writeGate.RunAsync(async () =>
+        writeGate.RunAsync(async ct =>
         {
-            using var response = await httpClient.PostAsJsonAsync(path, body, cancellationToken);
-            await GrampsErrorTranslator.EnsureSuccessAsync(response, cancellationToken);
-            return await ReadJsonOrEmptyAsync(response, cancellationToken);
+            using var response = await httpClient.PostAsJsonAsync(path, body, ct);
+            await GrampsErrorTranslator.EnsureSuccessAsync(response, ct);
+            return await ReadJsonOrEmptyAsync(response, ct);
         }, cancellationToken);
 
     /// <summary>Undoes a committed transaction, e.g. <c>POST /api/transactions/history/{id}/undo</c>.</summary>
     public Task<JsonElement> UndoTransactionAsync(
         int transactionId, bool force, string? message, CancellationToken cancellationToken) =>
-        writeGate.RunAsync(() => SendUndoAsync(transactionId, force, message, cancellationToken), cancellationToken);
+        writeGate.RunAsync(ct => SendUndoAsync(transactionId, force, message, ct), cancellationToken);
 
     private async Task<JsonElement> SendUndoAsync(
         int transactionId, bool force, string? message, CancellationToken cancellationToken)
