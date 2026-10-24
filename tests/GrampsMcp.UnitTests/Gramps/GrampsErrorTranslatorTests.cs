@@ -14,6 +14,23 @@ public class GrampsErrorTranslatorTests
     }
 
     [Fact]
+    public async Task EnsureSuccessAsync_OnHtmlInternalServerError_ReplacesBodyWithShortMessage()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent("<!doctype html>\n<html><body><h1>Internal Server Error</h1></body></html>"),
+        };
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => GrampsErrorTranslator.EnsureSuccessAsync(response, CancellationToken.None));
+
+        Assert.DoesNotContain("<html", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("500", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("locked", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.InternalServerError, exception.StatusCode);
+    }
+
+    [Fact]
     public async Task EnsureSuccessAsync_OnGqlParseError_PassesErrorMessageVerbatim()
     {
         const string parseError = "Expected end of text, found '~' (at char 31), (line:1, col:32)";

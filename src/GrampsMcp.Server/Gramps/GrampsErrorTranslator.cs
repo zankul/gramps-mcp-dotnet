@@ -47,7 +47,26 @@ internal static class GrampsErrorTranslator
             // Not JSON — fall through and surface the raw body.
         }
 
-        return body;
+        return LooksLikeHtml(body) ? HtmlErrorMessage(response) : body;
+    }
+
+    private static bool LooksLikeHtml(string body)
+    {
+        var trimmed = body.AsSpan().TrimStart();
+        return trimmed.StartsWith("<!doctype html", StringComparison.OrdinalIgnoreCase) ||
+               trimmed.StartsWith("<html", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>An HTML error page (typically a bare 500 from gunicorn or a proxy) tells the model
+    /// nothing actionable, so replace it with a short summary rather than passing it through.</summary>
+    private static string HtmlErrorMessage(HttpResponseMessage response)
+    {
+        var status = (int)response.StatusCode;
+        return response.StatusCode >= System.Net.HttpStatusCode.InternalServerError
+            ? $"Gramps Web returned an internal error (HTTP {status}) with an HTML error page. If writes " +
+              "keep failing while reads work, the Gramps Web database may be locked (e.g. SQLite after " +
+              "overlapping writes) and need a restart."
+            : $"Gramps Web returned an HTML error page (HTTP {status}) instead of a JSON error.";
     }
 
     /// <summary>Looks for a top-level string error field, or Gramps Web's nested

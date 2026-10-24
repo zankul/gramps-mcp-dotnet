@@ -38,6 +38,13 @@ safe, and cheap in context**. Three measured facts from the Gramps Web API drive
 - **Updates are read-modify-write.** Gramps Web's `PUT` replaces the whole object, so
   `gramps_update` fetches the current object, applies your patch as a JSON Merge Patch (RFC 7396),
   and writes the merged result back.
+- **Writes are serialized per server instance.** Overlapping write calls queue inside the server
+  (reads stay concurrent), and `gramps_update` holds the queue across its read and write so two
+  parallel updates can't lose one patch. This protects a SQLite-backed Gramps Web, where
+  concurrent writes can fail with `database is locked` and leave it wedged until restart. It does
+  **not** cover two server instances (e.g. two MCP clients each spawning a stdio process) writing
+  to the same Gramps Web at once. If you need that, run a single shared HTTP instance, or fix it
+  on the Gramps Web side with a single gunicorn worker or a PostgreSQL backend.
 - **Undoable.** Every write is a transaction Gramps Web tracks; `gramps_history` lists them and
   `gramps_undo` reverses one.
 - **Credentials from environment only** — never logged, never echoed into tool output.
