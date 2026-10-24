@@ -55,15 +55,14 @@ public sealed class GrampsUpdateTool(GrampsApiClient apiClient)
             }
 
             var path = $"{collectionPath}{handle}";
-            var current = await apiClient.GetAsync<JsonElement>(
-                path, new GrampsGetRequest { Profile = "none" }, cancellationToken);
-
-            var merged = GrampsJsonMergePatch.Apply(
-                JsonNode.Parse(current.GetRawText()), JsonNode.Parse(patch.GetRawText()));
-            var mergedElement = JsonSerializer.SerializeToElement(merged);
-
-            await apiClient.ReplaceAsync(path, mergedElement, cancellationToken);
-            return mergedElement;
+            // The read and the write happen under one write-gate hold, so two concurrent updates
+            // to the same object queue rather than the later PUT discarding the earlier patch.
+            return await apiClient.ReadModifyWriteAsync(path, current =>
+            {
+                var merged = GrampsJsonMergePatch.Apply(
+                    JsonNode.Parse(current.GetRawText()), JsonNode.Parse(patch.GetRawText()));
+                return JsonSerializer.SerializeToElement(merged);
+            }, cancellationToken);
         });
     }
 }

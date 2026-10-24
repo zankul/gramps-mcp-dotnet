@@ -43,6 +43,7 @@ public static class GrampsServiceCollectionExtensions
             .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromSeconds(10));
         services.AddSingleton<GrampsTokenStore>();
         services.AddSingleton<GrampsPermissionsProvider>();
+        services.AddSingleton<GrampsWriteGate>();
         services.AddTransient<GrampsAuthHandler>();
 
         services

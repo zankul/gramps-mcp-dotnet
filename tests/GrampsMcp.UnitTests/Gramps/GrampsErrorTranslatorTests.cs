@@ -14,6 +14,86 @@ public class GrampsErrorTranslatorTests
     }
 
     [Fact]
+    public async Task EnsureSuccessAsync_OnHtmlInternalServerError_ReplacesBodyWithShortMessage()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent("<!doctype html>\n<html><body><h1>Internal Server Error</h1></body></html>"),
+        };
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => GrampsErrorTranslator.EnsureSuccessAsync(response, CancellationToken.None));
+
+        Assert.DoesNotContain("<html", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("500", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("locked", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.InternalServerError, exception.StatusCode);
+    }
+
+    [Fact]
+    public async Task EnsureSuccessAsync_OnHtmlBadGateway_OmitsLockHintAndKeepsExcerpt()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.BadGateway)
+        {
+            Content = new StringContent("\uFEFF<html><head><title>502</title></head><body><h1>Bad Gateway</h1></body></html>"),
+        };
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => GrampsErrorTranslator.EnsureSuccessAsync(response, CancellationToken.None));
+
+        Assert.DoesNotContain("locked", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("<", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("502 Bad Gateway", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EnsureSuccessAsync_OnHtmlWithStyleAndScript_ExcerptSkipsTheirContents()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.BadGateway)
+        {
+            Content = new StringContent(
+                "<html><head><style>body{color:red}</style><script>var x=1;</script></head>" +
+                "<body>Bad &amp; Gateway</body></html>"),
+        };
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => GrampsErrorTranslator.EnsureSuccessAsync(response, CancellationToken.None));
+
+        Assert.DoesNotContain("color:red", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("var x", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Bad & Gateway", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EnsureSuccessAsync_OnHugeUnclosedHtml_StaysBoundedAndShort()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent("<html>" + new string('<', 2_000_000)),
+        };
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => GrampsErrorTranslator.EnsureSuccessAsync(response, CancellationToken.None));
+
+        Assert.True(exception.Message.Length < 1000);
+    }
+
+    [Fact]
+    public async Task EnsureSuccessAsync_OnHtmlThatSlowsTheRegex_StillThrowsGrampsApiException()
+    {
+        // Many "<script" openers with no closing tag drive the script/style regex quadratic.
+        using var response = new HttpResponseMessage(HttpStatusCode.BadGateway)
+        {
+            Content = new StringContent("<html>" + string.Concat(Enumerable.Repeat("<script ", 1000))),
+        };
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => GrampsErrorTranslator.EnsureSuccessAsync(response, CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.BadGateway, exception.StatusCode);
+    }
+
+    [Fact]
     public async Task EnsureSuccessAsync_OnGqlParseError_PassesErrorMessageVerbatim()
     {
         const string parseError = "Expected end of text, found '~' (at char 31), (line:1, col:32)";

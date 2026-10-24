@@ -96,7 +96,8 @@ public class HealthEndpointTests : IClassFixture<WebApplicationFactory<Program>>
             {
                 services.AddTransient(sp => new GrampsApiClient(
                     new HttpClient(new ThrowingHandler(throwException)) { BaseAddress = new Uri("http://gramps.invalid") },
-                    sp.GetRequiredService<IOptions<GrampsOptions>>()));
+                    sp.GetRequiredService<IOptions<GrampsOptions>>(),
+                    sp.GetRequiredService<GrampsWriteGate>()));
             });
         });
 
