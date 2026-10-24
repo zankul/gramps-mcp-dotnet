@@ -18,6 +18,6 @@ internal static class GrampsTestClientFactory
     public static GrampsApiClient CreateClient(HttpMessageHandler handler)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri(Options.ApiUrl) };
-        return new GrampsApiClient(httpClient, Microsoft.Extensions.Options.Options.Create(Options));
+        return new GrampsApiClient(httpClient, Microsoft.Extensions.Options.Options.Create(Options), new GrampsWriteGate());
     }
 }

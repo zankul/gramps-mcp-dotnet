@@ -11,9 +11,9 @@ namespace GrampsMcp.Server.Gramps;
 /// <summary>Typed client for the Gramps Web API. Every list call goes through the guardrails in
 /// <see cref="GrampsQueryBuilder"/>.</summary>
 public sealed class GrampsApiClient(
-    HttpClient httpClient, IOptions<GrampsOptions> options, GrampsWriteGate? writeGate = null)
+    HttpClient httpClient, IOptions<GrampsOptions> options, GrampsWriteGate writeGate)
 {
-    private readonly GrampsWriteGate _writeGate = writeGate ?? new GrampsWriteGate();
+    private readonly GrampsWriteGate _writeGate = writeGate;
 
     public Task<GrampsListResult<T>> ListAsync<T>(
         string path, GrampsListRequest request, CancellationToken cancellationToken) =>

@@ -1,4 +1,6 @@
+using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace GrampsMcp.Server.Gramps;
 
@@ -11,7 +13,7 @@ namespace GrampsMcp.Server.Gramps;
 /// belong at the call site, not here — this type has no notion of which endpoint it's translating
 /// for.
 /// </summary>
-internal static class GrampsErrorTranslator
+internal static partial class GrampsErrorTranslator
 {
     private static readonly string[] ErrorFieldNames = ["error", "message", "detail"];
 
@@ -47,26 +49,37 @@ internal static class GrampsErrorTranslator
             // Not JSON — fall through and surface the raw body.
         }
 
-        return LooksLikeHtml(body) ? HtmlErrorMessage(response) : body;
+        return LooksLikeHtml(body) ? HtmlErrorMessage(body, response) : body;
     }
 
     private static bool LooksLikeHtml(string body)
     {
-        var trimmed = body.AsSpan().TrimStart();
+        var trimmed = body.AsSpan().TrimStart('\uFEFF').TrimStart();
         return trimmed.StartsWith("<!doctype html", StringComparison.OrdinalIgnoreCase) ||
                trimmed.StartsWith("<html", StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>An HTML error page (typically a bare 500 from gunicorn or a proxy) tells the model
-    /// nothing actionable, so replace it with a short summary rather than passing it through.</summary>
-    private static string HtmlErrorMessage(HttpResponseMessage response)
+    private const int HtmlExcerptLength = 200;
+
+    [GeneratedRegex(@"(?:<[^>]*>|\s)+")]
+    private static partial Regex TagsAndWhitespace();
+
+    /// <summary>An HTML error page (typically a bare 500 from gunicorn or a proxy) is noise to the
+    /// model, so replace it with a short summary plus a text-only excerpt. Only a plain 500 gets
+    /// the database-lock hint — 502/503/504 from a proxy are not lock symptoms.</summary>
+    private static string HtmlErrorMessage(string body, HttpResponseMessage response)
     {
         var status = (int)response.StatusCode;
-        return response.StatusCode >= System.Net.HttpStatusCode.InternalServerError
+        var text = TagsAndWhitespace().Replace(body, " ").Trim();
+        var excerpt = text.Length > HtmlExcerptLength ? text[..HtmlExcerptLength] + "…" : text;
+        var detail = excerpt.Length > 0 ? $" Page text: \"{excerpt}\"" : string.Empty;
+
+        return response.StatusCode == HttpStatusCode.InternalServerError
             ? $"Gramps Web returned an internal error (HTTP {status}) with an HTML error page. If writes " +
               "keep failing while reads work, the Gramps Web database may be locked (e.g. SQLite after " +
-              "overlapping writes) and need a restart."
-            : $"Gramps Web returned an HTML error page (HTTP {status}) instead of a JSON error.";
+              $"overlapping writes) and need a restart.{detail}"
+            : $"Gramps Web or a proxy in front of it returned an HTML error page (HTTP {status}) " +
+              $"instead of a JSON error.{detail}";
     }
 
     /// <summary>Looks for a top-level string error field, or Gramps Web's nested
