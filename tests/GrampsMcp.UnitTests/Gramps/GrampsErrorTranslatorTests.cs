@@ -47,6 +47,38 @@ public class GrampsErrorTranslatorTests
     }
 
     [Fact]
+    public async Task EnsureSuccessAsync_OnHtmlWithStyleAndScript_ExcerptSkipsTheirContents()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.BadGateway)
+        {
+            Content = new StringContent(
+                "<html><head><style>body{color:red}</style><script>var x=1;</script></head>" +
+                "<body>Bad &amp; Gateway</body></html>"),
+        };
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => GrampsErrorTranslator.EnsureSuccessAsync(response, CancellationToken.None));
+
+        Assert.DoesNotContain("color:red", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("var x", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Bad & Gateway", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EnsureSuccessAsync_OnHugeUnclosedHtml_StaysBoundedAndShort()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent("<html>" + new string('<', 2_000_000)),
+        };
+
+        var exception = await Assert.ThrowsAsync<GrampsApiException>(
+            () => GrampsErrorTranslator.EnsureSuccessAsync(response, CancellationToken.None));
+
+        Assert.True(exception.Message.Length < 1000);
+    }
+
+    [Fact]
     public async Task EnsureSuccessAsync_OnGqlParseError_PassesErrorMessageVerbatim()
     {
         const string parseError = "Expected end of text, found '~' (at char 31), (line:1, col:32)";

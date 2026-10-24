@@ -13,7 +13,6 @@ namespace GrampsMcp.Server.Gramps;
 public sealed class GrampsApiClient(
     HttpClient httpClient, IOptions<GrampsOptions> options, GrampsWriteGate writeGate)
 {
-    private readonly GrampsWriteGate _writeGate = writeGate;
 
     public Task<GrampsListResult<T>> ListAsync<T>(
         string path, GrampsListRequest request, CancellationToken cancellationToken) =>
@@ -65,7 +64,7 @@ public sealed class GrampsApiClient(
     /// <summary>Replaces an object wholesale, e.g. <c>PUT /api/people/{handle}</c> — Gramps Web's PUT
     /// replaces the entire object, so callers must read-modify-write the full body.</summary>
     public Task ReplaceAsync(string path, JsonElement payload, CancellationToken cancellationToken) =>
-        _writeGate.RunAsync(async () =>
+        writeGate.RunAsync(async () =>
         {
             await SendReplaceAsync(path, payload, cancellationToken);
             return true;
@@ -76,7 +75,7 @@ public sealed class GrampsApiClient(
     /// object queue instead of one overwriting the other's change. Returns the written object.</summary>
     public Task<JsonElement> ReadModifyWriteAsync(
         string path, Func<JsonElement, JsonElement> modify, CancellationToken cancellationToken) =>
-        _writeGate.RunAsync(async () =>
+        writeGate.RunAsync(async () =>
         {
             var current = await GetAsync<JsonElement>(
                 path, new GrampsGetRequest { Profile = "none" }, cancellationToken);
@@ -93,7 +92,7 @@ public sealed class GrampsApiClient(
 
     /// <summary>Deletes an object, e.g. <c>DELETE /api/people/{handle}</c>.</summary>
     public Task DeleteAsync(string path, CancellationToken cancellationToken) =>
-        _writeGate.RunAsync(async () =>
+        writeGate.RunAsync(async () =>
         {
             using var response = await httpClient.DeleteAsync(path, cancellationToken);
             await GrampsErrorTranslator.EnsureSuccessAsync(response, cancellationToken);
@@ -103,7 +102,7 @@ public sealed class GrampsApiClient(
     /// <summary>Posts a JSON body with no list-shaped response, e.g. merging two objects at
     /// <c>POST /api/people/{phoenix}/merge/{titanic}</c>.</summary>
     public Task<JsonElement> PostAsync(string path, JsonElement body, CancellationToken cancellationToken) =>
-        _writeGate.RunAsync(async () =>
+        writeGate.RunAsync(async () =>
         {
             using var response = await httpClient.PostAsJsonAsync(path, body, cancellationToken);
             await GrampsErrorTranslator.EnsureSuccessAsync(response, cancellationToken);
@@ -113,7 +112,7 @@ public sealed class GrampsApiClient(
     /// <summary>Undoes a committed transaction, e.g. <c>POST /api/transactions/history/{id}/undo</c>.</summary>
     public Task<JsonElement> UndoTransactionAsync(
         int transactionId, bool force, string? message, CancellationToken cancellationToken) =>
-        _writeGate.RunAsync(() => SendUndoAsync(transactionId, force, message, cancellationToken), cancellationToken);
+        writeGate.RunAsync(() => SendUndoAsync(transactionId, force, message, cancellationToken), cancellationToken);
 
     private async Task<JsonElement> SendUndoAsync(
         int transactionId, bool force, string? message, CancellationToken cancellationToken)

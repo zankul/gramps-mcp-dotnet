@@ -94,6 +94,13 @@ Three layers, one direction of dependency: **Tools → GrampsApiClient → HttpC
 - `GrampsPermissionsProvider` decodes the JWT's `permissions` claim (`GrampsJwt`) so callers can
   check the service account's real ceiling (`AddObject`, `EditObject`, `ViewPrivate`, ...) before
   attempting a write — this is what gates write-tool registration (see Write tools below).
+- `GrampsWriteGate` is a singleton `SemaphoreSlim(1,1)` that every write method on `GrampsApiClient`
+  queues through, so overlapping writes from one server instance can't race into a SQLite-backed
+  Gramps Web's `database is locked` wedge (#5). `ReadModifyWriteAsync` (used by `gramps_update`)
+  holds it across the GET and the PUT so parallel updates can't lose a patch. It is a required
+  constructor argument — a missing registration must fail, not silently disable serialization.
+  It only covers one process; separate server instances writing to the same Gramps Web are not
+  serialized against each other (see the README).
 - `GrampsServiceCollectionExtensions.AddGrampsClient()` is the single DI entry point: binds
   `GrampsOptions` from env vars and validates them at startup (fail fast), registers the token
   store, auth handler, and wires `Microsoft.Extensions.Http.Resilience`'s standard resilience

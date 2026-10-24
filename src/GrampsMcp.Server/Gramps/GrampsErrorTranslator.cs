@@ -61,7 +61,19 @@ internal static partial class GrampsErrorTranslator
 
     private const int HtmlExcerptLength = 200;
 
-    [GeneratedRegex(@"(?:<[^>]*>|\s)+")]
+    // Only the head of the page is inspected: the excerpt is short, and bounding the input keeps
+    // the regexes below cheap on a huge or pathological body.
+    private const int HtmlScanLength = 8000;
+
+    private const int RegexTimeoutMilliseconds = 250;
+
+    [GeneratedRegex(
+        @"<(script|style)\b[^>]*>.*?(?:</\1\s*>|$)",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline,
+        RegexTimeoutMilliseconds)]
+    private static partial Regex ScriptAndStyleBlocks();
+
+    [GeneratedRegex(@"(?:<[^>]*>|\s)+", RegexOptions.None, RegexTimeoutMilliseconds)]
     private static partial Regex TagsAndWhitespace();
 
     /// <summary>An HTML error page (typically a bare 500 from gunicorn or a proxy) is noise to the
@@ -70,8 +82,10 @@ internal static partial class GrampsErrorTranslator
     private static string HtmlErrorMessage(string body, HttpResponseMessage response)
     {
         var status = (int)response.StatusCode;
-        var text = TagsAndWhitespace().Replace(body, " ").Trim();
-        var excerpt = text.Length > HtmlExcerptLength ? text[..HtmlExcerptLength] + "…" : text;
+        var head = body.Length > HtmlScanLength ? body[..HtmlScanLength] : body;
+        var text = TagsAndWhitespace().Replace(ScriptAndStyleBlocks().Replace(head, " "), " ").Trim();
+        text = WebUtility.HtmlDecode(text);
+        var excerpt = text.Length > HtmlExcerptLength ? TruncateAtCodePoint(text, HtmlExcerptLength) + "…" : text;
         var detail = excerpt.Length > 0 ? $" Page text: \"{excerpt}\"" : string.Empty;
 
         return response.StatusCode == HttpStatusCode.InternalServerError
@@ -81,6 +95,9 @@ internal static partial class GrampsErrorTranslator
             : $"Gramps Web or a proxy in front of it returned an HTML error page (HTTP {status}) " +
               $"instead of a JSON error.{detail}";
     }
+
+    private static string TruncateAtCodePoint(string text, int length) =>
+        char.IsHighSurrogate(text[length - 1]) ? text[..(length - 1)] : text[..length];
 
     /// <summary>Looks for a top-level string error field, or Gramps Web's nested
     /// <c>{"error": {"code": ..., "message": "..."}}</c> shape.</summary>
