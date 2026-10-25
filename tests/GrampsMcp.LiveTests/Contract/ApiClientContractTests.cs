@@ -52,6 +52,36 @@ public class ApiClientContractTests(LiveGrampsFixture fixture)
         Assert.True(families.GetArrayLength() > 0, "Anchor person has families in ExampleTree, but profile.families came back empty.");
     }
 
+    [Theory]
+    [InlineData("person")]
+    [InlineData("family")]
+    [InlineData("event")]
+    [InlineData("place")]
+    [InlineData("citation")]
+    [InlineData("source")]
+    [InlineData("repository")]
+    [InlineData("media")]
+    [InlineData("note")]
+    [InlineData("tag")]
+    public async Task ListAndGetAsync_WithDefaultProfile_AreAcceptedUpstreamForEveryObjectType(string type)
+    {
+        // The default profile is person-oriented; `event` rejects part of it with a 422 "profile
+        // contains invalid keys" (#7). GrampsQueryBuilder filters the default per type, so a plain
+        // list + get with no explicit profile must succeed for every type, not just people.
+        LiveStackGate.Require(fixture);
+
+        var path = GrampsObjectTypes.ResolveCollectionPath(type);
+        var list = await fixture.ApiClient.ListAsync<JsonElement>(
+            path, new GrampsListRequest { PageSize = 1 }, CancellationToken.None);
+        Assert.NotEmpty(list.Items);
+
+        var handle = list.Items[0].GetProperty("handle").GetString();
+        var item = await fixture.ApiClient.GetAsync<JsonElement>(
+            $"{path}{handle}", new GrampsGetRequest(), CancellationToken.None);
+
+        Assert.Equal(handle, item.GetProperty("handle").GetString());
+    }
+
     [Fact]
     public async Task GetAsync_WithProfileNone_OmitsProfileSection()
     {

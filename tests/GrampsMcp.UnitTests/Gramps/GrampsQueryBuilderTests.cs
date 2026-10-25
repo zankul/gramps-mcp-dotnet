@@ -265,6 +265,103 @@ public class GrampsQueryBuilderTests
         Assert.Equal(Options.GqlDefaultPageSize.ToString(CultureInfo.InvariantCulture), Single(query, "pagesize"));
     }
 
+    [Fact]
+    public void Build_ForEvent_DropsDefaultProfileKeysEventsRejectUpstream()
+    {
+        // Measured live (#7): Gramps Web 422s `profile=self,families,events` on events with
+        // "profile contains invalid keys"; only `self` survives from the person-oriented default.
+        var query = GrampsQueryBuilder.Build(new GrampsListRequest(), Options, "event");
+
+        Assert.Equal("self", Single(query, "profile"));
+    }
+
+    [Theory]
+    [InlineData("person")]
+    [InlineData("family")]
+    [InlineData("place")]
+    [InlineData("citation")]
+    [InlineData("source")]
+    [InlineData("repository")]
+    [InlineData("media")]
+    [InlineData("note")]
+    [InlineData("tag")]
+    [InlineData(null)]
+    public void Build_ForOtherTypesOrUnknown_KeepsFullDefaultProfile(string? objectType)
+    {
+        var query = GrampsQueryBuilder.Build(new GrampsListRequest(), Options, objectType);
+
+        Assert.Equal("self,families,events", Single(query, "profile"));
+    }
+
+    [Fact]
+    public void Build_ForEvent_PassesExplicitProfileThroughUntouched()
+    {
+        // Only the default is filtered: an explicit profile must reach upstream as-is, so an
+        // invalid one still produces the verbatim upstream error rather than being silently fixed.
+        var query = GrampsQueryBuilder.Build(
+            new GrampsListRequest { Profile = "self,families,events" }, Options, "event");
+
+        Assert.Equal("self,families,events", Single(query, "profile"));
+    }
+
+    [Fact]
+    public void Build_ForEvent_WhenConfiguredDefaultHasNoSupportedKeys_OmitsProfile()
+    {
+        var options = new GrampsOptions
+        {
+            ApiUrl = Options.ApiUrl,
+            Username = Options.Username,
+            Password = Options.Password,
+            MaxPageSize = Options.MaxPageSize,
+            DefaultProfile = "families,events",
+        };
+
+        var query = GrampsQueryBuilder.Build(new GrampsListRequest(), options, "event");
+
+        Assert.DoesNotContain(query, kv => kv.Key == "profile");
+    }
+
+    [Fact]
+    public void Build_ForEvent_WhenConfiguredDefaultIsNone_StillOmitsProfile()
+    {
+        var options = new GrampsOptions
+        {
+            ApiUrl = Options.ApiUrl,
+            Username = Options.Username,
+            Password = Options.Password,
+            MaxPageSize = Options.MaxPageSize,
+            DefaultProfile = "none",
+        };
+
+        var query = GrampsQueryBuilder.Build(new GrampsListRequest(), options, "event");
+
+        Assert.DoesNotContain(query, kv => kv.Key == "profile");
+    }
+
+    [Fact]
+    public void BuildForGet_ForEvent_DropsUnsupportedDefaultKeys()
+    {
+        var query = GrampsQueryBuilder.BuildForGet(new GrampsGetRequest(), Options, "event");
+
+        Assert.Equal("self", Single(query, "profile"));
+    }
+
+    [Fact]
+    public void BuildForIdLookup_ForEvent_DropsUnsupportedDefaultKeys()
+    {
+        var query = GrampsQueryBuilder.BuildForIdLookup(new GrampsGetRequest(), Options, "event");
+
+        Assert.Equal("self", Single(query, "profile"));
+    }
+
+    [Fact]
+    public void BuildForGql_ForEvent_DropsUnsupportedDefaultKeys()
+    {
+        var query = GrampsQueryBuilder.BuildForGql(new GrampsGqlRequest { Gql = "type = Birth" }, Options, "event");
+
+        Assert.Equal("self", Single(query, "profile"));
+    }
+
     private static string? Single(IReadOnlyList<KeyValuePair<string, string?>> query, string key) =>
         query.Single(kv => kv.Key == key).Value;
 }

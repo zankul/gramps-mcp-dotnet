@@ -32,4 +32,26 @@ public class GrampsObjectTypesTests
         Assert.Contains("people", exception.Message);
         Assert.Contains("person", exception.Message);
     }
+
+    [Theory]
+    [InlineData("api/events/", "event")]
+    [InlineData("/api/events/", "event")]
+    [InlineData("api/events/104d3c7223d4", "event")]
+    [InlineData("api/people/?gramps_id=I0155", "person")]
+    [InlineData("api/families/", "family")]
+    [InlineData("api/media/", "media")]
+    public void FromPath_RecoversTypeFromCollectionAndObjectPaths(string path, string expectedType)
+    {
+        Assert.Equal(expectedType, GrampsObjectTypes.FromPath(path));
+    }
+
+    [Theory]
+    [InlineData("api/search/")]
+    [InlineData("api/transactions/history/")]
+    [InlineData("people/")]
+    [InlineData("")]
+    public void FromPath_OnNonObjectPath_ReturnsNull(string path)
+    {
+        Assert.Null(GrampsObjectTypes.FromPath(path));
+    }
 }

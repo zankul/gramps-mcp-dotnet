@@ -15,7 +15,7 @@ public sealed class GrampsApiClient(
 {
     public Task<GrampsListResult<T>> ListAsync<T>(
         string path, GrampsListRequest request, CancellationToken cancellationToken) =>
-        ExecuteListAsync<T>(path, GrampsQueryBuilder.Build(request, options.Value), cancellationToken);
+        ExecuteListAsync<T>(path, GrampsQueryBuilder.Build(request, options.Value, GrampsObjectTypes.FromPath(path)), cancellationToken);
 
     /// <summary>Fetches a paginated person/family timeline, e.g. <c>/api/people/{handle}/timeline</c>.</summary>
     public Task<GrampsListResult<T>> ListTimelineAsync<T>(
@@ -26,7 +26,7 @@ public sealed class GrampsApiClient(
     /// <c>/api/people/?gql=child_ref_list.length%20%3E%3D%203</c>.</summary>
     public Task<GrampsListResult<T>> QueryAsync<T>(
         string path, GrampsGqlRequest request, CancellationToken cancellationToken) =>
-        ExecuteListAsync<T>(path, BuildGqlQuery(request), cancellationToken);
+        ExecuteListAsync<T>(path, BuildGqlQuery(path, request), cancellationToken);
 
     /// <summary>Counts objects matching a GQL expression, at the cost of one request with
     /// <c>pagesize=1</c> (every list response is expected to carry <c>x-total-count</c>). Unlike
@@ -38,7 +38,7 @@ public sealed class GrampsApiClient(
         // Profile = "none": this call only reads the x-total-count header and discards the body,
         // so resolving profile data upstream (BuildForGql's new default) would be wasted work.
         var request = new GrampsGqlRequest { Gql = gql, PageSize = 1, Keys = ["handle"], Profile = "none" };
-        var query = BuildGqlQuery(request);
+        var query = BuildGqlQuery(path, request);
 
         var (_, total, statusCode, _, _) = await ExecuteRequestAsync<JsonElement>(path, query, cancellationToken);
         return total ?? throw new GrampsApiException(
@@ -172,7 +172,7 @@ public sealed class GrampsApiClient(
     /// <summary>Fetches a single object by its internal handle, e.g. <c>/api/people/{handle}</c>.</summary>
     public Task<T> GetAsync<T>(string path, GrampsGetRequest request, CancellationToken cancellationToken)
     {
-        var query = GrampsQueryBuilder.BuildForGet(request, options.Value);
+        var query = GrampsQueryBuilder.BuildForGet(request, options.Value, GrampsObjectTypes.FromPath(path));
         return GetAsync<T>(QueryHelpers.AddQueryString(path, query), cancellationToken);
     }
 
@@ -183,7 +183,7 @@ public sealed class GrampsApiClient(
     public async Task<T?> FindByGrampsIdAsync<T>(
         string collectionPath, string grampsId, GrampsGetRequest request, CancellationToken cancellationToken)
     {
-        var query = GrampsQueryBuilder.BuildForIdLookup(request, options.Value);
+        var query = GrampsQueryBuilder.BuildForIdLookup(request, options.Value, GrampsObjectTypes.FromPath(collectionPath));
         query.Add(new KeyValuePair<string, string?>("gramps_id", grampsId));
         var url = QueryHelpers.AddQueryString(collectionPath, query);
 
@@ -210,9 +210,9 @@ public sealed class GrampsApiClient(
         return items.Count > 0 ? items[0] : default;
     }
 
-    private List<KeyValuePair<string, string?>> BuildGqlQuery(GrampsGqlRequest request)
+    private List<KeyValuePair<string, string?>> BuildGqlQuery(string path, GrampsGqlRequest request)
     {
-        var query = GrampsQueryBuilder.BuildForGql(request, options.Value);
+        var query = GrampsQueryBuilder.BuildForGql(request, options.Value, GrampsObjectTypes.FromPath(path));
         query.Add(new KeyValuePair<string, string?>("gql", request.Gql));
         return query;
     }

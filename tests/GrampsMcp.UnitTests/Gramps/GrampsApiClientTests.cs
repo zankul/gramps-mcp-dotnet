@@ -87,6 +87,50 @@ public class GrampsApiClientTests
     }
 
     [Fact]
+    public async Task ListAsync_ForEventsPath_SendsOnlyProfileKeysEventsAccept()
+    {
+        var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("[]", Encoding.UTF8, "application/json"),
+        });
+        var client = CreateClient(handler);
+
+        await client.ListAsync<TestPerson>("api/events/", new GrampsListRequest(), CancellationToken.None);
+
+        Assert.Equal("self", QueryHelpers.ParseQuery(handler.Requests.Single().RequestUri!.Query)["profile"]);
+    }
+
+    [Fact]
+    public async Task GetAsync_ForEventHandle_SendsOnlyProfileKeysEventsAccept()
+    {
+        var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"handle":"h1"}""", Encoding.UTF8, "application/json"),
+        });
+        var client = CreateClient(handler);
+
+        await client.GetAsync<TestPerson>("api/events/h1", new GrampsGetRequest(), CancellationToken.None);
+
+        Assert.Equal("self", QueryHelpers.ParseQuery(handler.Requests.Single().RequestUri!.Query)["profile"]);
+    }
+
+    [Fact]
+    public async Task ListAsync_ForPeoplePath_KeepsFullDefaultProfile()
+    {
+        var handler = new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("[]", Encoding.UTF8, "application/json"),
+        });
+        var client = CreateClient(handler);
+
+        await client.ListAsync<TestPerson>("api/people/", new GrampsListRequest(), CancellationToken.None);
+
+        Assert.Equal(
+            "self,families,events",
+            QueryHelpers.ParseQuery(handler.Requests.Single().RequestUri!.Query)["profile"]);
+    }
+
+    [Fact]
     public async Task CountAsync_OmitsProfileFromQuery()
     {
         // CountAsync only reads the x-total-count header and discards the body, so it must not

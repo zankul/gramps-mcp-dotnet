@@ -25,7 +25,7 @@ public sealed class GrampsQueryTool(GrampsApiClient apiClient)
         string gql,
         [Description("Page number, starting at 1.")] int page = 1,
         [Description("Results per page. Defaults to ~20 (not the server cap) to keep results self-contained; raise explicitly up to the server-capped max for more.")] int? pagesize = null,
-        [Description("Profile sections to include, e.g. 'self,families,events'. Pass 'none' to disable.")]
+        [Description("Profile sections to include, e.g. 'self,families,events'. Events only accept 'self' (and 'all', 'references'). Pass 'none' to disable.")]
         string? profile = null,
         [Description("Related-object keys to expand inline, e.g. 'family_list,event_ref_list'. Use 'all' for everything.")]
         IReadOnlyList<string>? extend = null,

@@ -13,11 +13,11 @@ namespace GrampsMcp.Server.Gramps;
 /// </summary>
 internal static class GrampsQueryBuilder
 {
-    public static IReadOnlyList<KeyValuePair<string, string?>> Build(GrampsListRequest request, GrampsOptions options)
+    public static IReadOnlyList<KeyValuePair<string, string?>> Build(GrampsListRequest request, GrampsOptions options, string? objectType = null)
     {
         var query = BuildPagination(request.Page, request.PageSize, options);
 
-        AppendShapingParameters(query, request.Profile, extend: null, request.Keys, request.SkipKeys, options);
+        AppendShapingParameters(query, request.Profile, extend: null, request.Keys, request.SkipKeys, options, objectType);
 
         if (!string.IsNullOrEmpty(request.Sort))
         {
@@ -54,10 +54,10 @@ internal static class GrampsQueryBuilder
     /// filter matches broadly, the same way <see cref="BuildForSearch"/> bounds search's common
     /// case. The <c>gql</c> parameter itself is added by the caller.
     /// </summary>
-    public static List<KeyValuePair<string, string?>> BuildForGql(GrampsGqlRequest request, GrampsOptions options)
+    public static List<KeyValuePair<string, string?>> BuildForGql(GrampsGqlRequest request, GrampsOptions options, string? objectType = null)
     {
         var query = BuildPagination(request.Page, request.PageSize, options, options.GqlDefaultPageSize);
-        AppendShapingParameters(query, request.Profile, request.Extend, request.Keys, request.SkipKeys, options);
+        AppendShapingParameters(query, request.Profile, request.Extend, request.Keys, request.SkipKeys, options, objectType);
         return query;
     }
 
@@ -82,10 +82,10 @@ internal static class GrampsQueryBuilder
     /// must NOT be reused for a collection endpoint filtered down to one row — see
     /// <see cref="BuildForIdLookup"/> for that case, which needs the opposite pagination guardrail.
     /// </summary>
-    public static IReadOnlyList<KeyValuePair<string, string?>> BuildForGet(GrampsGetRequest request, GrampsOptions options)
+    public static IReadOnlyList<KeyValuePair<string, string?>> BuildForGet(GrampsGetRequest request, GrampsOptions options, string? objectType = null)
     {
         var query = new List<KeyValuePair<string, string?>>();
-        AppendShapingParameters(query, request.Profile, request.Extend, request.Keys, request.SkipKeys, options);
+        AppendShapingParameters(query, request.Profile, request.Extend, request.Keys, request.SkipKeys, options, objectType);
         return query;
     }
 
@@ -100,11 +100,11 @@ internal static class GrampsQueryBuilder
     /// unpaginated request here would materialize the entire collection. Forces
     /// <c>page=1&amp;pagesize=1</c> — a Gramps ID lookup only ever wants a single row.
     /// </summary>
-    public static List<KeyValuePair<string, string?>> BuildForIdLookup(GrampsGetRequest request, GrampsOptions options)
+    public static List<KeyValuePair<string, string?>> BuildForIdLookup(GrampsGetRequest request, GrampsOptions options, string? objectType = null)
     {
         var query = BuildPagination(1, 1, options);
 
-        AppendShapingParameters(query, request.Profile, request.Extend, request.Keys, request.SkipKeys, options);
+        AppendShapingParameters(query, request.Profile, request.Extend, request.Keys, request.SkipKeys, options, objectType);
         return query;
     }
 
@@ -169,9 +169,10 @@ internal static class GrampsQueryBuilder
         IReadOnlyList<string>? extend,
         IReadOnlyList<string>? keys,
         IReadOnlyList<string>? skipKeys,
-        GrampsOptions options)
+        GrampsOptions options,
+        string? objectType)
     {
-        var resolvedProfile = profile ?? options.DefaultProfile;
+        var resolvedProfile = profile ?? ResolveDefaultProfile(objectType, options);
         if (!string.IsNullOrEmpty(resolvedProfile) && !string.Equals(resolvedProfile, "none", StringComparison.OrdinalIgnoreCase))
         {
             query.Add(new KeyValuePair<string, string?>("profile", resolvedProfile));
@@ -180,6 +181,31 @@ internal static class GrampsQueryBuilder
         AddCommaJoined(query, "extend", extend);
         AddCommaJoined(query, "keys", keys);
         AddCommaJoined(query, "skipkeys", skipKeys);
+    }
+
+    // Measured live: `event` objects reject the person-oriented default keys with 422 "profile
+    // contains invalid keys"; every other object type accepted them. Only the *default* is
+    // filtered — an explicit caller-supplied profile goes through untouched so an upstream error
+    // still reaches the model verbatim.
+    private static readonly Dictionary<string, HashSet<string>> UnsupportedDefaultProfileKeys =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["event"] = new(["families", "events"], StringComparer.OrdinalIgnoreCase),
+        };
+
+    private static string? ResolveDefaultProfile(string? objectType, GrampsOptions options)
+    {
+        if (objectType is null || !UnsupportedDefaultProfileKeys.TryGetValue(objectType, out var unsupported))
+        {
+            return options.DefaultProfile;
+        }
+
+        var supported = options.DefaultProfile
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(key => !unsupported.Contains(key));
+
+        var joined = string.Join(',', supported);
+        return joined.Length == 0 ? null : joined;
     }
 
     // Gramps Web parses these as a single delimited value (OpenAPI style=form, explode=false);
