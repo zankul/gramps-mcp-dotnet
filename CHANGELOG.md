@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.2] - 2026-10-25
+
+### Fixed
+- Overlapping write calls could make a SQLite-backed Gramps Web fail with `database is locked` and
+  stay wedged until restart. Writes from one server instance now queue through a shared gate, and
+  `gramps_update` holds it across its read-modify-write so parallel updates can't lose a patch.
+  Separate server instances writing to the same Gramps Web are still not serialized against each
+  other (see the README). (#5, #6)
+- HTML error pages from Gramps Web (e.g. a bare `500 Internal Server Error`) are replaced with a
+  short, actionable message instead of being passed to the model verbatim. (#6)
+- `gramps_get`, `gramps_list` and `gramps_query` on events failed with `422 profile contains
+  invalid keys`, because the person-oriented default profile `self,families,events` is rejected for
+  events. The default is now trimmed per object type (events use `self`); an explicit `profile` is
+  still sent untouched. (#7, #8)
+
 ## [0.0.1] - 2026-10-18
 
 First public release.
@@ -24,4 +39,5 @@ First public release.
 - Multi-arch (`linux/amd64`, `linux/arm64`) container image published to GHCR.
 - Offline unit tests, plus Live (local Docker stack) and Demo (`demo.grampsweb.org`) test tiers.
 
+[0.0.2]: https://github.com/zankul/gramps-mcp-dotnet/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/zankul/gramps-mcp-dotnet/releases/tag/v0.0.1
