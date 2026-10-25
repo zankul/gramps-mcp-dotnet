@@ -20,6 +20,9 @@ public static class GrampsObjectTypes
         ["tag"] = "tags",
     };
 
+    private static readonly Dictionary<string, string> TypesBySegment = PathSegments
+        .ToDictionary(kv => kv.Value, kv => kv.Key, StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Resolves a type name to its REST collection path, e.g. "person" -> "api/people/".
     /// Deliberately relative (no leading slash): <see cref="GrampsApiClient"/> composes this
     /// against <c>HttpClient.BaseAddress</c>, and a leading slash would resolve path-absolute,
@@ -36,5 +39,18 @@ public static class GrampsObjectTypes
         }
 
         return $"api/{segment}/";
+    }
+
+    /// <summary>
+    /// Recovers the singular type name from a request path, e.g. "api/events/" or
+    /// "api/events/abc123" -> "event". Returns <see langword="null"/> for paths that aren't an
+    /// object collection (e.g. "api/search/"), so callers can treat the type as unknown.
+    /// </summary>
+    public static string? FromPath(string path)
+    {
+        var segments = path.Split('?', 2)[0].Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length >= 2 && segments[0] == "api" && TypesBySegment.TryGetValue(segments[1], out var type)
+            ? type
+            : null;
     }
 }

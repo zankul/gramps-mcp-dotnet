@@ -18,7 +18,7 @@ public sealed class GrampsGetTool(GrampsApiClient apiClient)
         string idOrHandle,
         [Description("Related-object keys to expand inline, e.g. 'family_list,event_ref_list'. Use 'all' for everything.")]
         IReadOnlyList<string>? extend = null,
-        [Description("Profile sections to include, e.g. 'self,families,events'. Pass 'none' to disable.")]
+        [Description("Profile sections to include, e.g. 'self,families,events'. Events only accept 'self' (and 'all', 'references'). Pass 'none' to disable.")]
         string? profile = null,
         CancellationToken cancellationToken = default)
     {

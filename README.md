@@ -24,7 +24,8 @@ safe, and cheap in context**. Three measured facts from the Gramps Web API drive
   search is the default path and GQL is an explicitly-labelled advanced escape hatch.
 - **`profile=self,families,events` resolves opaque handles into readable text** (dates, place
   names, event summaries). That's the default response shape — the model gets usable answers
-  without chasing follow-up calls.
+  without chasing follow-up calls. The default is trimmed per object type where Gramps Web
+  rejects part of it (events only accept `self`), so it never 422s a plain call.
 
 ## Safety posture
 

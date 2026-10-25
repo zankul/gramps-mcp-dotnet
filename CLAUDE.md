@@ -193,7 +193,13 @@ facts about the live Gramps Web API (also in that doc) — not arbitrary default
   description and pass 422 parse errors through verbatim.
 - **Default `profile` resolves handles into readable text.** Without it, a person record is opaque
   handles; `GrampsOptions.DefaultProfile` (`self,families,events`) makes responses self-contained
-  without follow-up calls. Passing `profile=none` opts out explicitly.
+  without follow-up calls. Passing `profile=none` opts out explicitly. The default
+  is person-oriented and is trimmed per object type (`GrampsQueryBuilder`'s
+  `UnsupportedDefaultProfileKeys`; type recovered from the request path via
+  `GrampsObjectTypes.FromPath`) — measured live, `event` 422s on `families`/`events`, every other
+  type accepts them (#7). Only the *default* is trimmed; an explicit caller `profile` is sent
+  untouched so a bad one still returns the verbatim upstream error. A new type that rejects part
+  of the default needs an entry there plus a case in the Live per-type test.
 - **Read-only by default.** `GRAMPS_ALLOW_WRITES` gates whether write tools are *registered at
   all*, not merely whether they error — an unregistered tool can't be planned around by the model.
   The JWT's permission claim additionally has to actually grant the right before a write tool is
